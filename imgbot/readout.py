@@ -9,6 +9,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from .vision import FLAT_EPS, _prep
+
 
 def enlarge(scene, factor: int = 4):
     """小字体放大(4x 后才检得出)."""
@@ -19,15 +21,8 @@ def _match_all(scene_bgr, tpl, threshold: float):
     """灰度+掩码多匹配(与 vision.find 同预处理), 连通域取峰.
     返回 [(x, y, w, h, score)](x/y 为模板左上角), 供逐字 NMS 用."""
     gray = cv2.cvtColor(scene_bgr, cv2.COLOR_BGR2GRAY)
-    if tpl.ndim == 3 and tpl.shape[2] == 4:
-        tg = cv2.cvtColor(tpl[:, :, :3], cv2.COLOR_BGR2GRAY)
-        mask = tpl[:, :, 3]
-    elif tpl.ndim == 3:
-        tg = cv2.cvtColor(tpl, cv2.COLOR_BGR2GRAY)
-        mask = None
-    else:
-        tg, mask = tpl, None
-    if float(tg.std()) < 1e-6:
+    tg, mask = _prep(tpl)
+    if float(tg.std()) < FLAT_EPS:
         return []
     res = cv2.matchTemplate(gray, tg, cv2.TM_CCOEFF_NORMED) \
         if mask is None else cv2.matchTemplate(gray, tg, cv2.TM_CCOEFF_NORMED, mask=mask)
@@ -40,7 +35,7 @@ def _match_all(scene_bgr, tpl, threshold: float):
         rx, ry, rw, rh, _area = stats[i]
         local = res[ry:ry + rh, rx:rx + rw]
         dy, dx = np.unravel_index(int(local.argmax()), local.shape)
-        if float(gray[ry + dy:ry + dy + h, rx + dx:rx + dx + w].std()) < 1e-6:
+        if float(gray[ry + dy:ry + dy + h, rx + dx:rx + dx + w].std()) < FLAT_EPS:
             continue                           # 零方差命中区 = 纯色虚高, 剔除
         out.append((int(rx + dx), int(ry + dy), w, h, float(local[dy, dx])))
     return out

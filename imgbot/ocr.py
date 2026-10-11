@@ -44,7 +44,7 @@ def _run_ocr(screen_bgr, region, fast: bool = False):
     if region:
         off_x, off_y, x2, y2 = region
         screen_bgr = screen_bgr[off_y:y2, off_x:x2]
-    result, _ = (_engine_fast() if fast else _engine())(screen_bgr)
+    result, _ = engine(fast)(screen_bgr)
     out = []
     for box, text, _conf in result or []:
         xs = [int(p[0]) for p in box]
@@ -75,7 +75,7 @@ def raw_texts(screen_bgr, region=None, fast: bool = False):
     if region:
         off_x, off_y, x2, y2 = region
         screen_bgr = screen_bgr[off_y:y2, off_x:x2]
-    result, _ = (_engine_fast() if fast else _engine())(screen_bgr)
+    result, _ = engine(fast)(screen_bgr)
     return [(text, conf) for _, text, conf in result or []]
 
 

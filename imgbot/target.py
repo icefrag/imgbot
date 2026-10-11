@@ -57,7 +57,7 @@ class AdbTarget(Target):
 
     def type_text(self, text: str):
         """中文注入(ADBKeyboard 广播); 首次调用自动装输入法, 用完 ime.restore 还原."""
-        if not ime.ensure(self.device, self.serial):
+        if not ime.ensure(self.device):
             raise RuntimeError("输入法组件未就绪, 无法注入文字")
         ime.type_text(self.device, text)
 
