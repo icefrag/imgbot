@@ -292,7 +292,7 @@ def _color_mask(sub: np.ndarray, colors, tol) -> np.ndarray:
     return np.any(np.all(np.abs(sub[:, :, None, :] - cols) <= tol3, axis=-1), axis=-1)
 
 
-def _region(screen_bgr: np.ndarray, region=None) -> np.ndarray:
+def _region(screen_bgr: np.ndarray, region=None) -> tuple[np.ndarray, tuple[int, int]]:
     h, w = screen_bgr.shape[:2]
     x1, y1, x2, y2 = region if region else (0, 0, w, h)
     return screen_bgr[y1:y2, x1:x2].astype(int), (x1, y1)

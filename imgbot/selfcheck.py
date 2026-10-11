@@ -7,16 +7,20 @@ import ctypes
 import ctypes.wintypes as wt
 import random
 import tempfile
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from . import adb as adb_mod
-from . import vision
+from . import ime, vision
 from .ocr import best_match
 from .readout import enlarge, read_digits
-from .win32.input import WM_CHAR, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PASTE, human_path
+from .win32.capture import capture_client
+from .win32.input import (CF_UNICODETEXT, WM_CHAR, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                          WM_MOUSEMOVE, WM_PASTE, human_path, send_paste)
+from .win32.input import MouseKeyboard
 from .win32.window import GameWindow
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -126,8 +130,6 @@ def fake_png(width: int, height: int) -> bytes:
 
 
 def main():
-    import time
-
     # ---- adb 解析 ----
     assert adb_mod.png_size(fake_png(960, 540)) == (960, 540)
     assert adb_mod.parse_devices(
@@ -303,7 +305,6 @@ def main():
     assert read_digits(big, {"1": t1, "2": t2}) == "12"
 
     # ---- ime 资产在位 ----
-    from . import ime
     assert ime.ASSET_APK.exists(), "ADBKeyboard.apk 应随库打包在 imgbot/assets/"
 
     # ---- win32: 拟人轨迹(纯计算) ----
@@ -312,7 +313,6 @@ def main():
     assert all(dt >= 0 for _x, _y, dt in path)
 
     # ---- win32: 后台键鼠消息序列(message-only 录制窗口, 不碰任何真窗口) ----
-    from .win32.input import MouseKeyboard
     hwnd, records, pump = create_message_window()
     try:
         gw = GameWindow(hwnd)
@@ -333,7 +333,6 @@ def main():
         _user32.DestroyWindow(hwnd)
 
     # ---- win32: 剪贴板粘贴(send_paste: 剪贴板往返 + WM_PASTE 投递) ----
-    from .win32.input import CF_UNICODETEXT, send_paste
     hwnd2, records2, pump2 = create_message_window()
     try:
         send_paste(GameWindow(hwnd2), "粘贴123")
@@ -352,7 +351,6 @@ def main():
         _user32.DestroyWindow(hwnd2)
 
     # ---- win32: PrintWindow 截屏链路(纯色窗口 + BGR 序验证) ----
-    from .win32.capture import capture_client
     vh, cleanup = create_visible_window(200, 100, (30, 200, 90))  # RGB(30,200,90)
     try:
         time.sleep(0.3)

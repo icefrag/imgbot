@@ -155,22 +155,20 @@ def send_paste(window, text):
     输入框支持粘贴时比逐字符快且稳(免逐字符焦点节奏坑, 中文一次到位);
     用后剪贴板内容被替换 —— 调用方自己决定要不要保存/还原。
     """
-    u32 = ctypes.windll.user32
-    k32 = ctypes.windll.kernel32
     data = text.encode("utf-16-le") + b"\x00\x00"
-    if not u32.OpenClipboard(None):
+    if not _u32.OpenClipboard(None):
         raise OSError("OpenClipboard 失败(剪贴板被占用?)")
     try:
-        u32.EmptyClipboard()
-        h = k32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+        _u32.EmptyClipboard()
+        h = _k32.GlobalAlloc(GMEM_MOVEABLE, len(data))
         if not h:
             raise OSError("GlobalAlloc 失败")
-        p = k32.GlobalLock(h)
+        p = _k32.GlobalLock(h)
         ctypes.memmove(p, data, len(data))
-        k32.GlobalUnlock(h)
-        if not u32.SetClipboardData(CF_UNICODETEXT, h):
-            k32.GlobalFree(h)                # 没交给剪贴板才需要自己释放
+        _k32.GlobalUnlock(h)
+        if not _u32.SetClipboardData(CF_UNICODETEXT, h):
+            _k32.GlobalFree(h)                # 没交给剪贴板才需要自己释放
             raise OSError("SetClipboardData 失败")
     finally:
-        u32.CloseClipboard()
+        _u32.CloseClipboard()
     window.post_message(WM_PASTE, 0, 0)
