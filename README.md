@@ -35,7 +35,7 @@ t.tap(*hit[:2])
 模块速查: `vision`(find/find_all/find_any/find_by_points/Pt/wait_find/changed/
 is_display_dead/find_color/count_color/cmp_color/color_at/ave_color/色键) ·
 `ocr`(find_text/find_texts/find_lines/raw_texts/engine) · `readout`(enlarge/read_digits) ·
-`adb`(AdbDevice/png_size/list_devices) · `actions`(拟人 tap/swipe/pause) ·
+`adb`(AdbDevice/png_size/list_devices) · `actions`(拟人 tap/swipe/pause, wait_tap=轮询出现即点) ·
 `ime`(ensure/type_text/restore) · `win32`(GameWindow/capture_client/MouseKeyboard/send_paste)。
 
 **方法决策树/验收门槛见 AGENTS.md(动手前必读); 多点找色选点对接见 多点找色Pt规范.md。**

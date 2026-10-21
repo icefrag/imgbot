@@ -243,13 +243,14 @@ def find_all(screen_bgr: np.ndarray, tpl: np.ndarray, threshold: float = DEFAULT
     return hits
 
 
-def wait_find(screenshot_fn, name: str, timeout: float = 30,
+def wait_find(screenshot_fn, name: str | np.ndarray, timeout: float = 30,
               interval: float = 0.4, threshold: float = DEFAULT_THRESHOLD,
               stop_event=None) -> tuple[int, int, float] | None:
     """轮询截图直到模板出现; 超时返回 None. screenshot_fn 无参返回 BGR ndarray.
+    name 为模板文件名(走 load 缓存)或已加载的模板图.
     interval 0.4s: 截图本身0.2s+, 再快没意义; 原默认0.8s实测让每个弹窗多等半拍(提速实证)."""
     deadline = time.monotonic() + timeout
-    tpl = load(name)
+    tpl = load(name) if isinstance(name, str) else name
     while True:
         hit = find(screenshot_fn(), tpl, threshold)
         if hit:

@@ -7,13 +7,14 @@ import ctypes
 import ctypes.wintypes as wt
 import random
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from . import adb as adb_mod
+from . import actions, adb as adb_mod
 from . import ime, vision
 from .ocr import best_match
 from .readout import enlarge, read_digits
@@ -179,6 +180,41 @@ def main():
     same = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
     assert not vision.changed(same, same.copy())
     assert vision.changed(same, rng.integers(0, 255, (540, 960, 3), dtype=np.uint8))
+
+    # ---- wait_tap: 轮询出现即点(假帧序列注入; 命中/超时/停止三分支) ----
+    class _FakeDev:  # AdbDevice 替身: screenshot() 吐 PNG bytes, 帧耗尽后停最后一帧
+        def __init__(self, frames: list[np.ndarray]):
+            self.frames, self.i = frames, 0
+
+        def screenshot(self) -> bytes:
+            img = self.frames[min(self.i, len(self.frames) - 1)]
+            self.i += 1
+            return cv2.imencode(".png", img)[1].tobytes()
+
+    miss_frame = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
+    taps, logs = [], []
+    _orig_tap, _orig_load2 = actions.tap, vision.load
+    actions.tap = lambda dev, x, y, **_: taps.append((x, y))  # 劫持拟人 tap 验证"命中即点"
+    vision.load = lambda n: tpl  # 文件名路径走 load 缓存(劫持, 不落盘)
+    try:
+        hit3 = actions.wait_tap(_FakeDev([miss_frame, miss_frame, screen]), tpl,
+                                timeout=5, interval=0.02, log=logs.append)
+        assert hit3 and abs(hit3[0] - 360) <= 1 and abs(hit3[1] - 120) <= 1, hit3
+        assert taps == [hit3[:2]] and logs and "score=" in logs[0], (taps, logs)
+        assert actions.wait_tap(_FakeDev([miss_frame]), tpl,
+                                timeout=0.25, interval=0.05) is None  # 不出现 → None
+        assert len(taps) == 1 and len(logs) == 1                        # 超时不点击不多话
+        ev = threading.Event()
+        ev.set()
+        t_stop = time.monotonic()
+        assert actions.wait_tap(_FakeDev([miss_frame]), tpl, timeout=5,
+                                interval=0.05, stop_event=ev) is None
+        assert time.monotonic() - t_stop < 2, "stop_event 置位应立即返回, 不等满 timeout"
+        assert actions.wait_tap(_FakeDev([screen]), "btn.png",  # 模板文件名入参
+                                timeout=2, interval=0.02)
+    finally:
+        actions.tap = _orig_tap
+        vision.load = _orig_load2
 
     # ---- 多点找色(Pt 规范): 矩形范围 / 全点命中 / 变体色 / 反色 / 方向 / 逐通道容差 ----
     canvas = rng.integers(40, 90, (540, 960, 3), dtype=np.uint8)  # 噪底远离特征色

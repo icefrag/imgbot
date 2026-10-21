@@ -8,6 +8,9 @@ from __future__ import annotations
 import random
 import time
 
+import numpy as np
+
+from . import vision
 from .adb import AdbDevice
 
 
@@ -33,3 +36,23 @@ def pause(seconds: tuple[float, float] = (1.0, 3.0), stop_event=None):
     end = time.monotonic() + random.uniform(*seconds)
     while not (stop_event is not None and stop_event.is_set()) and time.monotonic() < end:
         time.sleep(0.1)
+
+
+def wait_tap(device: AdbDevice, name: str | np.ndarray, timeout: float = 30,
+             interval: float = 0.4, threshold: float = vision.DEFAULT_THRESHOLD,
+             stop_event=None, log=None) -> tuple[int, int, float] | None:
+    """轮询等模板出现, 出现即拟人点击("循环等待+出现点击"通用原语, 魔神仓提炼下沉).
+
+    命中: tap 后返回 (中心x, 中心y, 分数); 超时/停止返回 None —— 不抛不截图, 失败
+    语义由调用方交代(要"强等待"自行 raise), 区分超时与停止用 stop_event.is_set().
+    name 为模板文件名(vision.load 缓存)或已加载模板图; log 可选回调, 命中点击时调用.
+    轮询语义同 vision.wait_find(一轮一帧, 库不带帧缓存).
+    """
+    hit = vision.wait_find(lambda: vision.decode_png(device.screenshot()), name,
+                           timeout, interval, threshold, stop_event)
+    if hit is None:
+        return None
+    tap(device, hit[0], hit[1])
+    if log is not None:
+        log(f"wait_tap 命中并点击 ({hit[0]},{hit[1]}) score={hit[2]:.2f}")
+    return hit
