@@ -35,7 +35,10 @@ class Target:
 class AdbTarget(Target):
     def __init__(self, serial: str, adb_path: str = "adb"):
         self.device = AdbDevice(serial, adb_path)
-        self.serial = serial
+
+    @property
+    def serial(self) -> str:
+        return self.device.serial
 
     def screenshot(self) -> np.ndarray:
         return vision.decode_png(self.device.screenshot())

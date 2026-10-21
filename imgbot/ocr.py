@@ -8,43 +8,35 @@ from __future__ import annotations
 
 from difflib import SequenceMatcher
 
-_ocr = None
-_ocr_fast = None
-
-
-def _engine():
-    global _ocr
-    if _ocr is None:
-        from rapidocr_onnxruntime import RapidOCR
-        _ocr = RapidOCR()
-    return _ocr
-
-
-def _engine_fast():
-    """det_limit_type='max' 的快引擎: 小图不被放大, 窄条OCR 1553ms→250ms(实测).
-
-    只给"大字窄条"场景用(板面标题行) — parity 实测它对任务窗/大地图的小字标签会整行漏读,
-    所以全局默认引擎保持 min 不动(宁可慢不可漏), 双引擎并存.
-    """
-    global _ocr_fast
-    if _ocr_fast is None:
-        from rapidocr_onnxruntime import RapidOCR
-        _ocr_fast = RapidOCR(det_limit_side_len=736, det_limit_type='max')
-    return _ocr_fast
+_engines: dict[bool, object] = {}
 
 
 def engine(fast: bool = False):
-    """取 OCR 单例引擎(消费项目的等级读取等可直接用, 免各自建单例)."""
-    return _engine_fast() if fast else _engine()
+    """取 OCR 单例引擎(消费项目的等级读取等可直接用, 免各自建单例).
+
+    fast=True 走 det_limit_type='max' 的快引擎: 小图不被放大, 窄条OCR 1553ms→250ms(实测).
+    只给"大字窄条"场景用(板面标题行) — parity 实测它对任务窗/大地图的小字标签会整行漏读,
+    所以全局默认引擎保持 min 不动(宁可慢不可漏), 双引擎并存.
+    """
+    if fast not in _engines:
+        from rapidocr_onnxruntime import RapidOCR
+        _engines[fast] = RapidOCR(det_limit_side_len=736, det_limit_type='max') if fast \
+            else RapidOCR()
+    return _engines[fast]
+
+
+def _crop(screen_bgr, region):
+    """裁 region=(x1,y1,x2,y2) 并返回 (子图, 偏移x, 偏移y); region=None 时全屏."""
+    if not region:
+        return screen_bgr, 0, 0
+    off_x, off_y, x2, y2 = region
+    return screen_bgr[off_y:y2, off_x:x2], off_x, off_y
 
 
 def _run_ocr(screen_bgr, region, fast: bool = False):
     """裁区域→引擎推理→[(中心x, 中心y, 文本)]; region=None 时全屏."""
-    off_x, off_y = 0, 0
-    if region:
-        off_x, off_y, x2, y2 = region
-        screen_bgr = screen_bgr[off_y:y2, off_x:x2]
-    result, _ = engine(fast)(screen_bgr)
+    img, off_x, off_y = _crop(screen_bgr, region)
+    result, _ = engine(fast)(img)
     out = []
     for box, text, _conf in result or []:
         xs = [int(p[0]) for p in box]
@@ -54,11 +46,16 @@ def _run_ocr(screen_bgr, region, fast: bool = False):
     return out
 
 
+def _ratio(keyword: str, text: str) -> float:
+    """关键词与文本的按序比例相似度(容忍个别错字)."""
+    return SequenceMatcher(None, keyword, text.strip()).ratio()
+
+
 def best_match(candidates, keyword: str, min_ratio: float = 0.7):
     """candidates=[(x, y, text)] 里选与 keyword 最像且 ≥min_ratio 的, 返回(x, y, 相似度)或 None. 纯逻辑可测."""
     best = None
     for x, y, text in candidates:
-        ratio = SequenceMatcher(None, keyword, text.strip()).ratio()
+        ratio = _ratio(keyword, text)
         if ratio >= min_ratio and (best is None or ratio > best[2]):
             best = (x, y, ratio)
     return best
@@ -71,22 +68,15 @@ def find_lines(screen_bgr, region=None, fast: bool = False):
 
 def raw_texts(screen_bgr, region=None, fast: bool = False):
     """OCR 原始文本列表 [(文本, 置信度)], 调用方自己做正则/数值解析(如读面板计数器)."""
-    off_x, off_y = 0, 0
-    if region:
-        off_x, off_y, x2, y2 = region
-        screen_bgr = screen_bgr[off_y:y2, off_x:x2]
-    result, _ = engine(fast)(screen_bgr)
+    img, _, _ = _crop(screen_bgr, region)
+    result, _ = engine(fast)(img)
     return [(text, conf) for _, text, conf in result or []]
 
 
 def find_texts(screen_bgr, keyword: str, region=None, min_ratio: float = 0.7):
     """OCR 找**所有**像 keyword 的文字(同名按钮/多处命中), 按 y 排序返回 [(x, y, 相似度)]."""
-    cands = _run_ocr(screen_bgr, region)
-    out = []
-    for x, y, text in cands:
-        ratio = SequenceMatcher(None, keyword, text.strip()).ratio()
-        if ratio >= min_ratio:
-            out.append((x, y, ratio))
+    out = [(x, y, r) for x, y, text in _run_ocr(screen_bgr, region)
+           if (r := _ratio(keyword, text)) >= min_ratio]
     out.sort(key=lambda t: t[1])
     return out
 

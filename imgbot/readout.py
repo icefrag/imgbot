@@ -9,7 +9,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from .vision import FLAT_EPS, _prep
+from .vision import _flat_hit, _match
 
 
 def enlarge(scene, factor: int = 4):
@@ -20,22 +20,18 @@ def enlarge(scene, factor: int = 4):
 def _match_all(scene_bgr, tpl, threshold: float):
     """灰度+掩码多匹配(与 vision.find 同预处理), 连通域取峰.
     返回 [(x, y, w, h, score)](x/y 为模板左上角), 供逐字 NMS 用."""
-    gray = cv2.cvtColor(scene_bgr, cv2.COLOR_BGR2GRAY)
-    tg, mask = _prep(tpl)
-    if float(tg.std()) < FLAT_EPS:
+    m = _match(scene_bgr, tpl)
+    if m is None:
         return []
-    res = cv2.matchTemplate(gray, tg, cv2.TM_CCOEFF_NORMED) \
-        if mask is None else cv2.matchTemplate(gray, tg, cv2.TM_CCOEFF_NORMED, mask=mask)
-    res[~np.isfinite(res)] = -1.0
-    m = (res >= threshold).astype(np.uint8)
-    n, _, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
-    h, w = tg.shape
+    res, gray, h, w = m
+    binary = (res >= threshold).astype(np.uint8)
+    n, _, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     out = []
     for i in range(1, n):                      # 0 是背景
         rx, ry, rw, rh, _area = stats[i]
         local = res[ry:ry + rh, rx:rx + rw]
         dy, dx = np.unravel_index(int(local.argmax()), local.shape)
-        if float(gray[ry + dy:ry + dy + h, rx + dx:rx + dx + w].std()) < FLAT_EPS:
+        if _flat_hit(gray, rx + dx, ry + dy, h, w):
             continue                           # 零方差命中区 = 纯色虚高, 剔除
         out.append((int(rx + dx), int(ry + dy), w, h, float(local[dy, dx])))
     return out

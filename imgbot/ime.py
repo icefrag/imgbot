@@ -2,7 +2,7 @@
 
 adb input text 只能打 ASCII, 中文会静默丢字. 装上 ADBKeyboard 后, 中文经广播直达
 聚焦的输入框. ensure() 幂等(缺就装+切换), 用完 restore() 还原原输入法, 对模拟器零残留.
-签名只吃 (device, serial, log), 不绑上层框架 —— 各项目用自己的日志对象包一层即可.
+签名只吃 (device, log), 不绑上层框架 —— 各项目用自己的日志对象包一层即可.
 """
 from __future__ import annotations
 

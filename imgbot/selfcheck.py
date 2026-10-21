@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -20,8 +21,8 @@ from .ocr import best_match
 from .readout import enlarge, read_digits
 from .win32.capture import capture_client
 from .win32.input import (CF_UNICODETEXT, WM_CHAR, WM_LBUTTONDOWN, WM_LBUTTONUP,
-                          WM_MOUSEMOVE, WM_PASTE, human_path, send_paste)
-from .win32.input import MouseKeyboard
+                          WM_MOUSEMOVE, WM_PASTE, MouseKeyboard, human_path,
+                          send_paste)
 from .win32.window import GameWindow
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -56,6 +57,23 @@ class WNDCLASSEXW(ctypes.Structure):
     ]
 
 
+def _register_class(cls: str, wndproc, brush=None):
+    """注册窗口类并返回 (hwnd 相关准备好的 hinst, wc).
+
+    wc 必须被调用方持有: 回收后窗口类指向已释放蹦床, Dispatch 即崩.
+    """
+    hinst = _kernel32.GetModuleHandleW(None)
+    wc = WNDCLASSEXW()
+    wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
+    wc.lpfnWndProc = wndproc
+    wc.hInstance = hinst
+    wc.hbrBackground = brush if brush is not None else 0
+    wc.lpszClassName = cls
+    if not _user32.RegisterClassExW(ctypes.byref(wc)):
+        raise OSError("RegisterClassExW 失败: %d" % ctypes.get_last_error())
+    return hinst, wc
+
+
 def create_message_window():
     """message-only 窗口, WndProc 记录到达的消息(LZG_PMH tests/_winhelper 思路).
     返回 (hwnd, records, pump) — pump() 处理队列后返回."""
@@ -67,16 +85,8 @@ def create_message_window():
         records.append((int(msg), int(wp), int(lp)))
         return _user32.DefWindowProcW(hwnd, msg, wp, lp)
 
-    hinst = _kernel32.GetModuleHandleW(None)
-    cls = "ImgbotMsg%d" % seq
-    wc = WNDCLASSEXW()
-    wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
-    wc.lpfnWndProc = wndproc
-    wc.hInstance = hinst
-    wc.lpszClassName = cls
-    if not _user32.RegisterClassExW(ctypes.byref(wc)):
-        raise OSError("RegisterClassExW 失败: %d" % ctypes.get_last_error())
-    hwnd = _user32.CreateWindowExW(0, cls, "", 0, 0, 0, 0, 0, HWND_MESSAGE, None, ctypes.c_void_p(hinst), None)
+    hinst, wc = _register_class("ImgbotMsg%d" % seq, wndproc)
+    hwnd = _user32.CreateWindowExW(0, wc.lpszClassName, "", 0, 0, 0, 0, 0, HWND_MESSAGE, None, ctypes.c_void_p(hinst), None)
     if not hwnd:
         raise OSError("CreateWindowExW 失败: %d" % ctypes.get_last_error())
 
@@ -102,25 +112,16 @@ def create_visible_window(width, height, bg_rgb):
         return _user32.DefWindowProcW(hwnd, msg, wp, lp)
 
     create_visible_window._keep = wndproc     # 防 WNDPROC 回调被 GC 后窗口崩溃
-    hinst = _kernel32.GetModuleHandleW(None)
-    cls = "ImgbotVis%d" % seq
-    wc = WNDCLASSEXW()
-    wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
-    wc.lpfnWndProc = wndproc
-    wc.hInstance = hinst
-    wc.hbrBackground = brush
-    wc.lpszClassName = cls
-    if not _user32.RegisterClassExW(ctypes.byref(wc)):
-        raise OSError("RegisterClassExW 失败: %d" % ctypes.get_last_error())
+    hinst, wc = _register_class("ImgbotVis%d" % seq, wndproc, brush)
     hwnd = _user32.CreateWindowExW(
-        0, cls, "imgbot-selfcheck", 0x10CF0000,  # WS_OVERLAPPEDWINDOW
+        0, wc.lpszClassName, "imgbot-selfcheck", 0x10CF0000,  # WS_OVERLAPPEDWINDOW
         100, 100, width + 16, height + 39, None, None, ctypes.c_void_p(hinst), None)
     _user32.ShowWindow(hwnd, 1)
     _user32.UpdateWindow(hwnd)
 
     def cleanup():
         _user32.DestroyWindow(hwnd)
-        _user32.UnregisterClassW(cls, ctypes.c_void_p(hinst))
+        _user32.UnregisterClassW(wc.lpszClassName, ctypes.c_void_p(hinst))
         _gdi32.DeleteObject(brush)
 
     return hwnd, cleanup
@@ -169,14 +170,10 @@ def main():
             raise FileNotFoundError(name)
         return fake_tpls[name]
 
-    _orig_load = vision.load
-    vision.load = _fake_load
-    try:
+    with mock.patch.object(vision, "load", _fake_load):
         hit = vision.find_any(screen, ["a.png", "b.png"])
         assert hit and abs(hit[0] - 360) <= 1 and abs(hit[1] - 120) <= 1 and hit[2] > 0.99
         assert vision.find_any(screen, ["b.png", "c.png"]) is None  # 全缺失 → None
-    finally:
-        vision.load = _orig_load
     same = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
     assert not vision.changed(same, same.copy())
     assert vision.changed(same, rng.integers(0, 255, (540, 960, 3), dtype=np.uint8))
@@ -193,10 +190,8 @@ def main():
 
     miss_frame = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
     taps, logs = [], []
-    _orig_tap, _orig_load2 = actions.tap, vision.load
-    actions.tap = lambda dev, x, y, **_: taps.append((x, y))  # 劫持拟人 tap 验证"命中即点"
-    vision.load = lambda n: tpl  # 文件名路径走 load 缓存(劫持, 不落盘)
-    try:
+    with mock.patch.object(actions, "tap", lambda dev, x, y, **_: taps.append((x, y))), \
+         mock.patch.object(vision, "load", lambda n: tpl):  # 劫持 tap/load, 不落盘
         hit3 = actions.wait_tap(_FakeDev([miss_frame, miss_frame, screen]), tpl,
                                 timeout=5, interval=0.02, log=logs.append)
         assert hit3 and abs(hit3[0] - 360) <= 1 and abs(hit3[1] - 120) <= 1, hit3
@@ -210,11 +205,20 @@ def main():
         assert actions.wait_tap(_FakeDev([miss_frame]), tpl, timeout=5,
                                 interval=0.05, stop_event=ev) is None
         assert time.monotonic() - t_stop < 2, "stop_event 置位应立即返回, 不等满 timeout"
+        # 停止优先: 已叫停且模板就在屏上 —— 不得命中更不得点击(停止≠命中)
+        assert actions.wait_tap(_FakeDev([screen]), tpl, timeout=5,
+                                interval=0.05, stop_event=ev) is None
+        assert len(taps) == 1, f"停止后不应再点击, 实际点了 {len(taps)} 次"
         assert actions.wait_tap(_FakeDev([screen]), "btn.png",  # 模板文件名入参
                                 timeout=2, interval=0.02)
-    finally:
-        actions.tap = _orig_tap
-        vision.load = _orig_load2
+
+    # 停止优先是 wait_find 的语义(不止 wait_tap): 已叫停时即使模板在屏上也不该返回命中
+    ev2 = threading.Event()
+    ev2.set()
+    assert vision.wait_find(lambda: screen.copy(), tpl, timeout=5, interval=0.05,
+                            stop_event=ev2) is None
+    assert vision.wait_find(lambda: screen.copy(), tpl, timeout=5,
+                            interval=0.05) is not None  # 无 stop_event 时正常命中
 
     # ---- 多点找色(Pt 规范): 矩形范围 / 全点命中 / 变体色 / 反色 / 方向 / 逐通道容差 ----
     canvas = rng.integers(40, 90, (540, 960, 3), dtype=np.uint8)  # 噪底远离特征色
@@ -322,6 +326,7 @@ def main():
             probe2.unlink()
         finally:
             vision.set_templates_dir(_orig_dir)
+            vision._tpl_cache.clear()   # 临时目录的模板别留在缓存里
 
     # ---- OCR 纯逻辑 ----
     assert best_match([(100, 200, "军团任务发布员"), (300, 100, "军团服务商店")], "军团任务发布员")[:2] == (100, 200)
@@ -402,6 +407,18 @@ def main():
         assert abs(int(b) - 90) <= 6 and abs(int(g) - 200) <= 6 and abs(int(r) - 30) <= 6, (b, g, r)
     finally:
         cleanup()
+
+    # ---- win32: 伪最小化停靠往返(状态位必须跟着 park 走, 曾恒为 False) ----
+    vh2, cleanup2 = create_visible_window(200, 100, (30, 200, 90))
+    try:
+        gw = GameWindow(vh2)
+        assert gw.is_pseudo_minimized is False
+        gw.park_offscreen(True)
+        assert gw.is_pseudo_minimized is True, "停靠后应报告伪最小化"
+        gw.park_offscreen(False)
+        assert gw.is_pseudo_minimized is False
+    finally:
+        cleanup2()
 
     print("imgbot selfcheck ok")
 

@@ -107,28 +107,52 @@ def _prep(tpl: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
     return tpl, None
 
 
+class _MatchResult(NamedTuple):
+    """模板匹配结果(单一来源 _match 的产物): result=相关系数矩阵, gray=屏幕灰度,
+    h/w=模板高宽(命中区零方差判定用)."""
+    result: np.ndarray
+    gray: np.ndarray
+    h: int
+    w: int
+
+
+def _match(screen_bgr: np.ndarray, tpl: np.ndarray) -> _MatchResult | None:
+    """模板匹配公共预处理(单一来源): 灰度化 + 掩码 + 零方差拦截 + 非有限值压平.
+
+    纯色模板(零方差)返回 None.
+    """
+    screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
+    tpl_gray, mask = _prep(tpl)
+    if float(tpl_gray.std()) < FLAT_EPS:
+        return None
+    result = cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED) \
+        if mask is None else \
+        cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED, mask=mask)
+    # 退化窗口(掩码/纯色背景)会产生 inf/NaN, 先压掉再取最大, 否则会盖过真实命中位
+    result[~np.isfinite(result)] = -1.0
+    return _MatchResult(result, screen_gray, tpl_gray.shape[0], tpl_gray.shape[1])
+
+
+def _flat_hit(screen_gray: np.ndarray, x: int, y: int, h: int, w: int) -> bool:
+    """命中区是否纯色(零方差): 相关系数在纯色块上无意义, 一律判未命中."""
+    return float(screen_gray[y:y + h, x:x + w].std()) < FLAT_EPS
+
+
 def find(screen_bgr: np.ndarray, tpl: np.ndarray,
          threshold: float = DEFAULT_THRESHOLD) -> tuple[int, int, float] | None:
     """单目标模板匹配, 返回(中心x, 中心y, 分数); 低于阈值返回 None.
 
     零方差防虚高(LZG_PMH 移植): 纯色模板/纯色命中区上的相关系数无意义, 一律判未命中.
     """
-    screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
-    tpl_gray, mask = _prep(tpl)
-    if float(tpl_gray.std()) < FLAT_EPS:
+    m = _match(screen_bgr, tpl)
+    if m is None:
         return None
-    h, w = tpl_gray.shape
-    result = cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED) \
-        if mask is None else \
-        cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED, mask=mask)
-    # 退化窗口(掩码/纯色背景)会产生 inf/NaN, 先压掉再取最大, 否则会盖过真实命中位
-    result[~np.isfinite(result)] = -1.0
-    _, score, _, loc = cv2.minMaxLoc(result)
+    _, score, _, loc = cv2.minMaxLoc(m.result)
     if not math.isfinite(score) or score < threshold:
         return None
-    if float(screen_gray[loc[1]:loc[1] + h, loc[0]:loc[0] + w].std()) < FLAT_EPS:
+    if _flat_hit(m.gray, loc[0], loc[1], m.h, m.w):
         return None
-    return loc[0] + w // 2, loc[1] + h // 2, score
+    return loc[0] + m.w // 2, loc[1] + m.h // 2, score
 
 
 def find_any(screen_bgr: np.ndarray, names: list[str],
@@ -219,23 +243,18 @@ def find_all(screen_bgr: np.ndarray, tpl: np.ndarray, threshold: float = DEFAULT
 
     用于数个数类的场景(如任务星级的一排金星), 单目标用 find.
     """
-    screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
-    tpl_gray, mask = _prep(tpl)
-    if float(tpl_gray.std()) < FLAT_EPS:
+    m = _match(screen_bgr, tpl)
+    if m is None:
         return []
-    result = cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED) \
-        if mask is None else \
-        cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED, mask=mask)
-    result[~np.isfinite(result)] = -1.0
+    result = m.result
     hits: list[tuple[int, int, float]] = []
-    h, w = tpl_gray.shape
     # 从最高分往下收, 收一个把邻近区域压掉(非极大值抑制)
     while True:
         _, score, _, loc = cv2.minMaxLoc(result)
         if score < threshold:
             break
-        if float(screen_gray[loc[1]:loc[1] + h, loc[0]:loc[0] + w].std()) >= FLAT_EPS:
-            hits.append((loc[0] + w // 2, loc[1] + h // 2, round(score, 3)))
+        if not _flat_hit(m.gray, loc[0], loc[1], m.h, m.w):
+            hits.append((loc[0] + m.w // 2, loc[1] + m.h // 2, round(score, 3)))
         x0, x1 = max(0, loc[0] - min_dist), loc[0] + min_dist
         y0, y1 = max(0, loc[1] - min_dist), loc[1] + min_dist
         result[y0:y1, x0:x1] = -1.0
@@ -252,11 +271,11 @@ def wait_find(screenshot_fn, name: str | np.ndarray, timeout: float = 30,
     deadline = time.monotonic() + timeout
     tpl = load(name) if isinstance(name, str) else name
     while True:
+        if stop_event is not None and stop_event.is_set():
+            return None          # 停止优先: 已叫停就不再截图、不再命中(停止≠命中)
         hit = find(screenshot_fn(), tpl, threshold)
         if hit:
             return hit
-        if stop_event is not None and stop_event.is_set():
-            return None
         if time.monotonic() >= deadline:
             return None
         time.sleep(interval)

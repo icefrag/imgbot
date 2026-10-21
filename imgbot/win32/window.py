@@ -86,7 +86,7 @@ class GameWindow:
 
     def __init__(self, hwnd):
         self.hwnd = hwnd
-        self._offscreen = None               # 伪最小化还原矩形存档, None = 不在屏外
+        self._parked_rect = None          # 伪最小化停靠前的窗口矩形存档, None = 不在屏外
 
     @classmethod
     def find(cls, class_name=None, title_keyword=None):
@@ -165,10 +165,18 @@ class GameWindow:
             user32.GetWindowTextW(self.hwnd, title, n + 1)
         return cname.value.strip(), title.value.strip(), self.client_rect()
 
+    def _window_rect(self):
+        """窗口屏幕矩形(wt.RECT: left/top/right/bottom); 取失败抛 OSError."""
+        rc = wt.RECT()
+        if not user32.GetWindowRect(self.hwnd, ctypes.byref(rc)):
+            raise OSError("GetWindowRect 失败: %d" % ctypes.get_last_error())
+        return rc
+
     def resize_client_to(self, target):
-        """把窗口调整为客户区 target=(宽,高), 保持位置。等待重排后复核, 返回是否成功。"""
-        rect = wt.RECT()
-        if not user32.GetWindowRect(self.hwnd, ctypes.byref(rect)):
+        """把窗口调整为客户区 target=(宽,高), 保持位置。等待重排后复核, 返回是否成功."""
+        try:
+            rect = self._window_rect()
+        except OSError:
             return False
         _, _, cw, ch = self.client_rect()
         dw = (rect.right - rect.left) - cw      # 外框 - 客户区 = 边框+标题栏加成
@@ -182,7 +190,7 @@ class GameWindow:
     @property
     def is_pseudo_minimized(self):
         """是否处于伪最小化(已挪出屏幕)状态 — GUI 按钮同步文案用。"""
-        return self._offscreen is not None
+        return self._parked_rect is not None
 
     def park_offscreen(self, park):
         """伪后台停靠: 窗口挪到所在显示器右下角之外, 仅留 2×30px 细缝在屏内
@@ -193,17 +201,14 @@ class GameWindow:
         离屏位置(上次被杀没还原/游戏记住了), 先挪回屏内默认位再存档。
         """
         if park:
-            if getattr(self, "_parked_rect", None) is not None or not self.is_alive():
+            if self._parked_rect is not None or not self.is_alive():
                 return
             if user32.IsIconic(self.hwnd):
                 user32.ShowWindow(self.hwnd, SW_RESTORE)
-            rc = wt.RECT()
-            if not user32.GetWindowRect(self.hwnd, ctypes.byref(rc)):
-                raise OSError("GetWindowRect 失败: %d" % ctypes.get_last_error())
+            rc = self._window_rect()
             if not self._rect_on_monitor(rc):
                 self._move_to_default()                    # 自愈: 完全离屏先回屏内
-                if not user32.GetWindowRect(self.hwnd, ctypes.byref(rc)):
-                    raise OSError("GetWindowRect 失败: %d" % ctypes.get_last_error())
+                rc = self._window_rect()
             mon = MONITORINFO()
             mon.cbSize = ctypes.sizeof(MONITORINFO)
             user32.GetMonitorInfoW(user32.MonitorFromWindow(self.hwnd, 1),
@@ -216,7 +221,7 @@ class GameWindow:
                 raise OSError("SetWindowPos 失败: %d" % ctypes.get_last_error())
             self._parked_rect = (rc.left, rc.top, rc.right, rc.bottom)
         else:
-            rect = getattr(self, "_parked_rect", None)
+            rect = self._parked_rect
             if rect is None:
                 return
             self._parked_rect = None
