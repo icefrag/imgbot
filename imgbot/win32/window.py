@@ -12,6 +12,26 @@ import time
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+
+R2_NOT = 6        # 画上去即反色, 同矩形再画一次即还原(XOR 自逆)
+NULL_BRUSH = 5    # 只描边不填充
+PS_SOLID = 0
+
+gdi32.GetStockObject.restype = ctypes.c_void_p
+gdi32.GetStockObject.argtypes = [ctypes.c_int]
+gdi32.SelectObject.restype = ctypes.c_void_p
+gdi32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+gdi32.SetROP2.restype = ctypes.c_int
+gdi32.SetROP2.argtypes = [ctypes.c_void_p, ctypes.c_int]
+gdi32.CreatePen.restype = ctypes.c_void_p
+gdi32.CreatePen.argtypes = [ctypes.c_int, ctypes.c_int, wt.COLORREF]
+gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
+gdi32.Rectangle.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                            ctypes.c_int, ctypes.c_int]
+user32.GetDC.restype = ctypes.c_void_p
+user32.GetDC.argtypes = [wt.HWND]
+user32.ReleaseDC.argtypes = [wt.HWND, ctypes.c_void_p]
 
 
 class UipiError(PermissionError):
@@ -81,6 +101,28 @@ def list_windows():
 
     user32.EnumWindows(on_window, 0)
     return out
+
+
+def xor_frame(rect):
+    """屏幕坐标矩形(l,t,r,b)上 XOR 反色描 2px 框(Spy++/大漠式拾取高亮).
+
+    XOR 自逆: 同一矩形再调一次即擦除 —— 调用方自己记住上次画的矩形."""
+    hdc = user32.GetDC(None)
+    if not hdc:
+        return
+    pen = gdi32.CreatePen(PS_SOLID, 2, 0)
+    brush = gdi32.GetStockObject(NULL_BRUSH)
+    old_pen = gdi32.SelectObject(hdc, pen)
+    old_brush = gdi32.SelectObject(hdc, brush)
+    old_rop2 = gdi32.SetROP2(hdc, R2_NOT)
+    try:
+        gdi32.Rectangle(hdc, *rect)
+    finally:
+        gdi32.SetROP2(hdc, old_rop2)
+        gdi32.SelectObject(hdc, old_brush)
+        gdi32.SelectObject(hdc, old_pen)
+        gdi32.DeleteObject(pen)
+        user32.ReleaseDC(None, hdc)
 
 
 def is_elevated():
@@ -186,6 +228,11 @@ class GameWindow:
         if n:
             user32.GetWindowTextW(self.hwnd, title, n + 1)
         return cname.value.strip(), title.value.strip(), self.client_rect()
+
+    def window_rect(self):
+        """(左, 上, 右, 下) 屏幕坐标 — 含边框/标题栏的完整窗口矩形(拾取高亮用)."""
+        rc = self._window_rect()
+        return rc.left, rc.top, rc.right, rc.bottom
 
     def _window_rect(self):
         """窗口屏幕矩形(wt.RECT: left/top/right/bottom); 取失败抛 OSError."""
