@@ -6,8 +6,15 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.5.3",
     "opencv-python>=5.0.0.93",
-    "rapidocr-onnxruntime>=1.4.4",
 ]
+
+[project.optional-dependencies]
+# OCR 是可选能力(引擎惰性导入, 不装 extra 时 import imgbot 不受影响)
+ocr = ["rapidocr-onnxruntime>=1.4.4"]
+
+[dependency-groups]
+# 本仓自检要跑 OCR 用例; 消费项目按需选 imgbot[ocr]
+dev = ["rapidocr-onnxruntime>=1.4.4"]
 
 [build-system]
 requires = ["hatchling"]

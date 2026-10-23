@@ -26,6 +26,15 @@ source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "opencv-python" },
+]
+
+[package.optional-dependencies]
+ocr = [
+    { name = "rapidocr-onnxruntime" },
+]
+
+[package.dev-dependencies]
+dev = [
     { name = "rapidocr-onnxruntime" },
 ]
 
@@ -33,8 +42,12 @@ dependencies = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "opencv-python", specifier = ">=5.0.0.93" },
-    { name = "rapidocr-onnxruntime", specifier = ">=1.4.4" },
+    { name = "rapidocr-onnxruntime", marker = "extra == 'ocr'", specifier = ">=1.4.4" },
 ]
+provides-extras = ["ocr"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "rapidocr-onnxruntime", specifier = ">=1.4.4" }]
 
 [[package]]
 name = "numpy"

@@ -1,6 +1,6 @@
 # 多点找色 · Pt 入参规范(pixpick ↔ find_by_points 对接契约)
 
-2026-10-02 定稿。消费方:脚本侧 `bot/vision.py` 的 `find_by_points` / `bot/ops.py` 的 `find_points`。
+2026-10-02 定稿。消费方:库侧 `imgbot/vision.py` 的 `find_by_points` / `bot/ops.py` 的 `find_points`。
 生产方:pixpick「选点找色」页(`D:/script-workspace/tools/pixpick`, 独立项目)。
 **任一侧改动必须同步本文件 + 两侧自检**(验收见文末)。
 
@@ -14,7 +14,7 @@
 - **全部点命中才返回**锚点全屏坐标 (x, y), 无达标候选返回 None;
 - `direction`: 有多个达标候选时返回哪个 — 0 左上起(默认) 1 左下起 2 右上起 3 右下起。
 
-## Pt 字段(`from bot.vision import Pt`, NamedTuple)
+## Pt 字段(`from imgbot.vision import Pt`, NamedTuple)
 
 | 字段 | 类型 | 默认 | 含义 | pixpick 怎么填 |
 |---|---|---|---|---|
@@ -34,7 +34,7 @@
 ## pixpick 输出格式(format_output 必须逐字符合)
 
 ```python
-from bot.vision import Pt
+from imgbot.vision import Pt
 pts = [
     Pt(0, 0, (61, 62, 227), 25),    # 锚点
     Pt(15, 3, (30, 80, 240), 25),

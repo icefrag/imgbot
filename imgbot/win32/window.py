@@ -61,6 +61,28 @@ SWP_NOZORDER = 0x0004
 SW_RESTORE = 9
 
 
+def list_windows():
+    """所有可见且有标题的顶层窗口 [(hwnd, 类名, 标题)] — 供工具类消费方做人工选绑列表."""
+    ensure_dpi_aware()
+    out = []
+
+    @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+    def on_window(hwnd, _):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        if not user32.GetWindowTextLengthW(hwnd):
+            return True              # 无标题的悬浮/工具窗口, 人工选绑无意义
+        title = ctypes.create_unicode_buffer(user32.GetWindowTextLengthW(hwnd) + 1)
+        user32.GetWindowTextW(hwnd, title, len(title))
+        cname = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, cname, 256)
+        out.append((hwnd, cname.value, title.value))
+        return True
+
+    user32.EnumWindows(on_window, 0)
+    return out
+
+
 def is_elevated():
     """本进程是否以管理员运行(UIPI 同级要求)。"""
     return bool(ctypes.WinDLL("shell32").IsUserAnAdmin())
