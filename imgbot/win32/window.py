@@ -32,6 +32,7 @@ gdi32.Rectangle.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
 user32.GetDC.restype = ctypes.c_void_p
 user32.GetDC.argtypes = [wt.HWND]
 user32.ReleaseDC.argtypes = [wt.HWND, ctypes.c_void_p]
+user32.EnumChildWindows.argtypes = [wt.HWND, ctypes.c_void_p, wt.LPARAM]
 
 
 class UipiError(PermissionError):
@@ -153,8 +154,11 @@ class GameWindow:
         self._parked_rect = None          # 伪最小化停靠前的窗口矩形存档, None = 不在屏外
 
     @classmethod
-    def find(cls, class_name=None, title_keyword=None):
-        """按窗口类名(优先)或标题关键字定位窗口; 找不到返回 None. 至少给一个条件."""
+    def find(cls, class_name=None, title_keyword=None, parent=None):
+        """按窗口类名(优先)或标题关键字定位窗口; 找不到返回 None. 至少给一个条件.
+
+        parent 给 hwnd 时只搜它的子孙窗口(大漠拾取绑的常是渲染子窗口, 如雷电 TheRender).
+        """
         if not class_name and not title_keyword:
             raise ValueError("class_name / title_keyword 至少给一个")
         ensure_dpi_aware()
@@ -163,11 +167,11 @@ class GameWindow:
         @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
         def on_window(hwnd, _):
             nonlocal by_class, by_title
-            if not user32.IsWindowVisible(hwnd):
+            if parent is None and not user32.IsWindowVisible(hwnd):
                 return True
             cname = ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, cname, 256)
-            if class_name and cname.value == class_name:
+            if class_name and cname.value.lower() == class_name.lower():  # Win32 类名不区分大小写
                 if by_class is None:
                     by_class = GameWindow(hwnd)
                 return True
@@ -175,17 +179,23 @@ class GameWindow:
                 n = user32.GetWindowTextLengthW(hwnd)
                 if n:
                     title = ctypes.create_unicode_buffer(n + 1)
-                    user32.GetWindowTextW(hwnd, title, n + 1)
                     if title_keyword in title.value and by_title is None:
                         by_title = GameWindow(hwnd)
             return True
 
-        user32.EnumWindows(on_window, 0)
+        if parent is None:
+            user32.EnumWindows(on_window, 0)
+        else:
+            user32.EnumChildWindows(parent, on_window, 0)
         return by_class or by_title
 
     @classmethod
-    def from_cursor(cls):
-        """取鼠标光标所在窗口(向上取到顶层窗口); 无窗口/本进程窗口返回 None。"""
+    def from_cursor(cls, root=True):
+        """取鼠标光标所在窗口; 无窗口/本进程窗口返回 None。
+
+        root=True 向上取到顶层窗口; root=False 取光标下的直接窗口(大漠式拾取,
+        模拟器会拿到内层渲染窗口而非带工具条的外壳)。
+        """
         ensure_dpi_aware()
         pt = wt.POINT()
         if not user32.GetCursorPos(ctypes.byref(pt)):
@@ -193,7 +203,8 @@ class GameWindow:
         hwnd = user32.WindowFromPoint(pt)
         if not hwnd:
             return None
-        hwnd = user32.GetAncestor(hwnd, 2)          # GA_ROOT: 子控件 -> 顶层窗口
+        if root:
+            hwnd = user32.GetAncestor(hwnd, 2)      # GA_ROOT: 子控件 -> 顶层窗口
         if not hwnd or not user32.IsWindow(hwnd):
             return None
         pid = wt.DWORD()
