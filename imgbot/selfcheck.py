@@ -140,6 +140,16 @@ def main():
         "127.0.0.1:5557\toffline\n"
         "emulator-5554\tunauthorized\n"
     ) == ["127.0.0.1:5555"]
+    # 模拟器双通道去重: emulator-5554 与 127.0.0.1:5555 是同一台(控制台+TCP), 只留 TCP
+    assert adb_mod.parse_devices(
+        "List of devices attached\n"
+        "127.0.0.1:5555\tdevice\n"
+        "emulator-5554\tdevice\n"
+    ) == ["127.0.0.1:5555"]
+    assert adb_mod.parse_devices(  # 只有控制台通道(无 TCP)时如实保留
+        "List of devices attached\n"
+        "emulator-5554\tdevice\n"
+    ) == ["emulator-5554"]
 
     # ---- 模板匹配 ----
     rng = np.random.default_rng(7)

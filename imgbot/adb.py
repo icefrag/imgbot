@@ -93,12 +93,22 @@ def adb(adb_path: str, *args: str, timeout: float = 15) -> str:
 
 
 def parse_devices(text: str) -> list[str]:
-    """解析 `adb devices` 输出, 只保留在线(device)的序列号."""
-    serials = []
+    """解析 `adb devices` 输出, 只保留在线(device)的序列号.
+
+    同一台模拟器会以两条传输通道出现(控制台 emulator-N + TCP 127.0.0.1:N+1,
+    模型信息完全相同), 只留 TCP 那条 —— 它才是 `adb connect` 用的稳定序列号."""
+    serials, tcp_seen = [], set()
     for line in text.splitlines()[1:]:
         parts = line.split()
-        if len(parts) >= 2 and parts[1] == "device":
-            serials.append(parts[0])
+        if len(parts) < 2 or parts[1] != "device":
+            continue
+        serial = parts[0]
+        if serial.startswith("emulator-") and serial[9:].isdigit() \
+                and f"127.0.0.1:{int(serial[9:]) + 1}" in tcp_seen:
+            continue  # TCP 通道已在列表, 控制台通道是同一台
+        if serial.startswith("127.0.0.1:"):
+            tcp_seen.add(serial)
+        serials.append(serial)
     return serials
 
 
