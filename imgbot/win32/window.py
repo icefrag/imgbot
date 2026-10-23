@@ -219,6 +219,26 @@ class GameWindow:
         """窗口是否假死(主循环卡死, 系统判定约 5s 未处理消息, 即任务栏"未响应")。"""
         return bool(user32.IsHungAppWindow(self.hwnd))
 
+    def pid(self):
+        """窗口所属进程 PID; 窗口已失效返回 0。"""
+        pid = wt.DWORD()
+        user32.GetWindowThreadProcessId(self.hwnd, ctypes.byref(pid))
+        return pid.value
+
+    def process_path(self):
+        """所属进程可执行文件完整路径; 拿不到(权限不足/进程已退出)返回空串。"""
+        h = kernel32.OpenProcess(0x1000, False, self.pid())  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            n = wt.DWORD(len(buf))
+            if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                return buf.value
+            return ""
+        finally:
+            kernel32.CloseHandle(h)
+
     def info(self):
         """(类名, 标题, 客户区(x,y,w,h)) — 绑定日志与身份校验用。"""
         cname = ctypes.create_unicode_buffer(256)
