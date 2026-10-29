@@ -124,8 +124,16 @@
 - **模拟器宿主窗口对合成消息免疫**(实测: 消息送达但无反应, 非 raw input、
   非激活门槛, 走自有输入通道)—— 模拟器后台输入一律用 adb(AdbTarget),
   别往 LDPlayerMainFrame/RenderWindow 打 win32 消息。
+- **前台 SendInput 字母键被中文输入法吞**(实测 2026-10-29): IME 活动时注入的
+  扫描码/VK 字母键进组合器, 投递的 WM_KEYDOWN 被改写 vk=0xE5, 永不产生
+  WM_CHAR —— 打字一律 KEYEVENTF_UNICODE(VK_PACKET 直注字符, 布局/IME 双免疫,
+  SendInputMouseKeyboard.type_text); 裸键(F 键/方向键等非文本键)不受 IME 影响,
+  保留扫描码注入。另: GetGUIThreadInfo 失败时**静默返回假全零**(结构体不匹配
+  会 FALSE, focus=0 是骗人的), 查焦点用 AttachThreadInput+GetFocus 才权威。
 - **PostMessage 依赖目标从消息循环读输入**: DirectInput/RawInput 的游戏免疫,
-  那种目标要换前台 SendInput 通道(留位未实现)。
+  那种目标换前台 SendInput 通道(已实现: DmSoft mouse/keypad="normal",
+  SendInputMouseKeyboard —— 动真光标单开专用; normal 图色=截屏裁客户区,
+  坐标系仍统一客户区)。
 - **d3d9 Present 转发必须真尾跳**(实测): Win10 d3d9!Present 检查调用来源,
   detour 里用 `call` 转发(栈上多一层外来帧/返址)第一次 Present 即崩
   (Eip 落栈页 DEP); `__attribute__((musttail))` 尾跳后栈布局与应用直调一致,

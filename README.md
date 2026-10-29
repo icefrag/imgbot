@@ -149,6 +149,7 @@ t.tap(*hit[:2])
 | `capture.capture_screen(rect=None) -> BGR ndarray` | 前台屏幕截取(微信截图底层); `rect=(x,y,w,h)` 屏幕坐标(可为负原点), None=整个虚拟屏幕; 遮挡即所得 |
 | `capture.virtual_screen_rect() -> (x, y, w, h)` | 多屏虚拟屏幕矩形(原点可为负, 主屏左上恒 0,0) |
 | `input.MouseKeyboard(window, inter_action_delay=0.05, rng=None)` | `click`/`double_click`/`move`/`hover`/`type_text`(WM_CHAR 逐码元) —— 拟人贝塞尔轨迹 |
+| `input.SendInputMouseKeyboard(window, inter_action_delay=0.05, rng=None)` | 前台键鼠(SendInput 真事件): 同 API 形状 + `key_tap`/`key_down`/`key_up`(扫描码裸键); `type_text` 用 KEYEVENTF UNICODE(IME 免疫); 动真光标, 单开专用 |
 | `input.send_paste(window, text)` | 剪贴板 + WM_PASTE(中文一次到位, 比逐字符稳) |
 | `input.human_path(x0, y0, x1, y1, rng, max_s=0.12)` | 拟人轨迹计算(纯函数, 可测) |
 

@@ -12,7 +12,8 @@
 通道词汇 = 大漠模式字符串(全表 docs/ref/damo-BindWindow*.txt):
 - display: "normal"(前台) / "gdi"/"gdi2"(PrintWindow 族) / "dx"*("dx","dx2",
   "dx.graphic.2d/3d/opengl" → 注入件; GL 已通, d3d9 在调试 → 明确报错)
-- mouse/keypad: "windows"* → PostMessage; "dx"* → 注入件; "normal" → 前台未实现
+- mouse/keypad: "windows"* → PostMessage; "dx"* → 注入件; "normal" → SendInput
+  真事件(前台, 动真光标, 单开专用; 图色坐标仍统一客户区)
 颜色格式同大漠: "RRGGBB" 或 "RRGGBB-DRDGDB"(偏差), FindPic 的 delta_color 同。
 未实现的方法 raise NotImplementedError(带说明) —— 决策4: 明确错误优先。
 """
@@ -79,18 +80,26 @@ class DmSoft:
                 self._dx.bind_input(hwnd)
                 self._dxmk = DxMouseKeyboard(self._dx, hwnd)
             if mouse.startswith("windows"):
-                if self._dxmk is None:
+                if self._dxmk is None and self._mk is None:
                     self._mk = MouseKeyboard(self._win)
             elif mouse.startswith("dx"):
                 pass
-            elif mouse != "normal":
+            elif mouse == "normal":
+                if self._dxmk is None and self._mk is None:
+                    from .win32.input import SendInputMouseKeyboard
+                    self._mk = SendInputMouseKeyboard(self._win)
+            else:
                 raise NotImplementedError(f"mouse 模式未实现: {mouse}")
             if keypad.startswith("windows"):
                 if self._mk is None and self._dxmk is None:
                     self._mk = MouseKeyboard(self._win)
             elif keypad.startswith("dx"):
                 pass
-            elif keypad != "normal":
+            elif keypad == "normal":
+                if self._mk is None and self._dxmk is None:
+                    from .win32.input import SendInputMouseKeyboard
+                    self._mk = SendInputMouseKeyboard(self._win)
+            else:
                 raise NotImplementedError(f"keypad 模式未实现: {keypad}")
             return 1
         except NotImplementedError:
@@ -204,7 +213,11 @@ class DmSoft:
     # ================= 图色 =================
     def _screen(self) -> np.ndarray:
         if self._display == "normal":
-            return capture_screen()
+            # 前台=截全屏后裁到绑定窗口客户区: 下游坐标系统一为客户区(大漠同款,
+            # 不裁的话 FindPic 返回屏幕坐标、点击却按客户区坐标走, 必错位)
+            img = capture_screen()
+            rx, ry, w_, h_ = self._win.client_rect()
+            return img[ry:ry + h_, rx:rx + w_]
         if self._display is None:
             raise RuntimeError("未 BindWindow")
         if self._display.startswith("dx"):
@@ -306,7 +319,11 @@ class DmSoft:
 
     # ================= 键鼠 =================
     def _mk_(self):
-        return self._dxmk if self._dxmk is not None else self._mk
+        if self._dxmk is not None:
+            return self._dxmk
+        if self._mk is not None:
+            return self._mk
+        raise RuntimeError("键鼠通道未绑定(BindWindow 的 mouse/keypad 传了未实现的模式)")
 
     def _need_dx(self):
         if self._dx is None:
@@ -404,20 +421,26 @@ class DmSoft:
             self._win.post_message(0x020A, (delta & 0xFFFF) << 16, (y & 0xFFFF) << 16 | (x & 0xFFFF))
 
     def _post(self, msg, wp, x, y):
-        """windows 通道裸消息(dx 通道按键序列走 host 命令)。"""
+        """裸按钮事件: dx 通道走 host 命令, 前台通道走 SendInput, 其余 PostMessage。"""
         if self._dxmk is not None:
             from .dx.host import M_LDOWN, M_LUP, M_MDOWN, M_MUP, M_RDOWN, M_RUP
             op = {0x0201: M_LDOWN, 0x0202: M_LUP, 0x0204: M_RDOWN,
                   0x0205: M_RUP, 0x0207: M_MDOWN, 0x0208: M_MUP}[msg]
             self._dx.mouse(x, y, op)
+        elif self._mk is not None and hasattr(self._mk, "left_down"):
+            getattr(self._mk, {0x0201: "left_down", 0x0202: "left_up",
+                               0x0204: "right_down", 0x0205: "right_up",
+                               0x0207: "middle_down", 0x0208: "middle_up"}[msg])()
         else:
             self._win.post_message(msg, wp, (y & 0xFFFF) << 16 | (x & 0xFFFF))
 
     def KeyPress(self, vk):
         if self._dxmk is not None:
             self._dxmk.key_tap(vk)
+        elif self._mk is not None and hasattr(self._mk, "key_tap"):
+            self._mk.key_tap(vk)
         else:
-            raise NotImplementedError("windows 通道键盘历史死案, 用 keypad='dx'")
+            raise NotImplementedError("windows 通道键盘历史死案, 用 keypad='dx'/'normal'")
         return 1
 
     def KeyDown(self, vk):
@@ -446,9 +469,11 @@ class DmSoft:
         return 1
 
     def SendString(self, hwnd: int, str_: str):
-        """向指定窗口逐字 WM_CHAR(与绑定通道无关, 大漠语义)。"""
+        """向指定窗口打字(与绑定通道无关, 大漠语义)。"""
         if self._dxmk is not None:
             self._dxmk.type_text(str_)
+        elif self._mk is not None and hasattr(self._mk, "type_text"):
+            self._mk.type_text(str_)             # 前台: SendInput UNICODE 注字符
         else:
             from .win32.input import WM_CHAR
             data = str_.encode("utf-16-le")
