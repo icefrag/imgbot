@@ -146,3 +146,17 @@
 - **模块隐藏的边界**(dx.hide_module): 摘 PEB 三链 → 模块枚举/扫链不可见;
   按名 `GetModuleHandle` 走 LdrpHashTable 仍可解析(摘哈希表需扫 ntdll 未导出
   全局, 不做)。反作弊扫模块列表的场景已够用。
+
+## Agent skills
+
+### Issue tracker
+
+本地 markdown 工单: `.scratch/<feature>/`(一特性一目录, spec.md + issues/NN-slug.md)。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+默认五标签(needs-triage/needs-info/ready-for-agent/ready-for-human/wontfix), 记为工单文件的 `Status:` 行。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+单上下文: 根 GLOSSARY.md(潜影等术语)+ docs/adr/(0001-dm-dx-channel)。See `docs/agents/domain.md`.
