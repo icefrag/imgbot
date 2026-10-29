@@ -75,17 +75,56 @@ class Win32Target(Target):
     def __init__(self, hwnd_or_window, capture: str = "printwindow", input: str = "postmessage"):
         self.window = hwnd_or_window if isinstance(hwnd_or_window, GameWindow) \
             else GameWindow(hwnd_or_window)
-        if capture != "printwindow":
+        self._dx = None
+        self._capture = capture
+        if capture not in ("printwindow", "dx"):
             raise NotImplementedError(f"capture 通道未实现: {capture}(留位: gdi/前台bitblt)")
-        if input != "postmessage":
-            raise NotImplementedError(f"input 通道未实现: {input}(留位: 前台sendinput)")
-        self.mk = MouseKeyboard(self.window)
+        if input not in ("postmessage", "dx"):
+            raise NotImplementedError(f"input 通道未实现: {input}(留位: 前台sendinput/驱动)")
+        if "dx" in (capture, input):
+            from .dx.host import DxHost
+            self._dx = DxHost(self.window.pid())
+            self._dx.bind()
+            if capture == "dx":
+                self._dx.hook_auto()       # 按已加载图形栈选 gl/d3d9; dxgi 走阶段 3
+        if input == "dx":
+            from .dx.input import DxMouseKeyboard
+            self._dx.bind_input(self.window.hwnd)
+            self.mk = DxMouseKeyboard(self._dx, self.window.hwnd)
+        else:
+            self.mk = MouseKeyboard(self.window)
+
+    def close(self):
+        """解绑 dx 注入件(不调则靠目标进程退出兜底收口)。"""
+        if self._dx is not None:
+            self._dx.unbind()
+            self._dx = None
 
     def screenshot(self) -> np.ndarray:
+        if self._capture == "dx":
+            return self._dx.capture()
         return capture_client(self.window)
 
     def tap(self, x: int, y: int):
         self.mk.click(x, y)
+
+    def drag(self, x1: int, y1: int, x2: int, y2: int, ms: int = 300):
+        """后台拖拽(dx 通道); postmessage 通道未实现。"""
+        if hasattr(self.mk, "drag"):
+            self.mk.drag(x1, y1, x2, y2, steps=max(6, ms // 25))
+        else:
+            raise NotImplementedError("postmessage 通道拖拽未实现, 用 input='dx'")
+
+    def keyevent(self, code: int):
+        """按键(统一入口)。dx 通道可用; postmessage 通道键盘是历史死案, 不提供。"""
+        self.key_tap(code)
+
+    def key_tap(self, vk: int):
+        """后台按键(dx 通道); postmessage 通道键盘是历史死案, 不提供。"""
+        if hasattr(self.mk, "key_tap"):
+            self.mk.key_tap(vk)
+        else:
+            raise NotImplementedError("postmessage 通道键盘实测无效, 用 input='dx' 或点击")
 
     def double_click(self, x: int, y: int):
         self.mk.double_click(x, y)
@@ -99,8 +138,5 @@ class Win32Target(Target):
     def paste(self, text: str):
         send_paste(self.window, text)
 
-    def keyevent(self, code: int):
-        raise NotImplementedError("后台键盘实测无效(ESC 类), 关闭/取消操作用点击")
-
     def swipe(self, x1: int, y1: int, x2: int, y2: int, ms: int = 300):
-        raise NotImplementedError("PC 后台拖拽未实现(WM_MOUSEMOVE+按住序列), 用到再加")
+        self.drag(x1, y1, x2, y2, ms)

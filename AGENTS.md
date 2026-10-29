@@ -6,6 +6,11 @@
 
 ## 库的基本约定(先知道再动手)
 
+- **自研后台插件名: 潜影(qianying)**: dx 通道注入件(dmcore.c: GL/d3d9 截帧+键鼠
+  配方+键态钩子)+注入器+共享内存协议+DmSoft 壳四件的合称。今后文档/交流/注释
+  一律称"潜影", **禁止以"大漠"指代本库组件**——"大漠"仅指反编译参考的原版商业
+  插件(逆向资料语境)。潜影与其关系: 接口词汇/消息配方按反编译对齐, 实现零依赖
+  完全自研, 详见 GLOSSARY.md。
 - **通道序一律 BGR**(cv2 惯例): adb 截图 / PrintWindow 截图 / 图色函数全链路统一,
   别在中间插 RGB 转换(历史上 RGB/BGR 混用是两套实现合并时最直接的坑)。
 - **模板目录由消费项目注入**: 入口处 `vision.set_templates_dir(路径)` 设一次,
@@ -99,7 +104,37 @@
 - **完全离屏触发 DXGI 遮挡节流**: 截图变暗冻结, 在假数据上跑脚本 → 用
   `park_offscreen` 细缝停靠(留 2×30px 在屏内), 别把窗口挪出显示器。
 - **后台键盘(WM_KEYDOWN)实测无效**: 关闭/取消一律用点击; 中文输入走
-  `type_text`(WM_CHAR)或 `paste`(剪贴板)。
+  `type_text`(WM_CHAR)或 `paste`(剪贴板)。→ dx 通道(`input="dx"`)已可用:
+  消息在目标进程内按大漠配方合成(焦点路由/手动 TranslateMessage/RIT 同步,
+  2026-10-29 反编译 7.2319 组件对齐), 记事本 WM_GETTEXT 硬验收通过。
+- **轮询型输入游戏(GetAsyncKeyState)对消息注入天然免疫**(kspoll 实测坐实:
+  消息全送达但轮询读到 0)——解法 = `DxHost.hook_keystate()` 钩
+  user32!GetKeyState/GetAsyncKeyState 喂虚拟按住态(大漠同机制, x86 专用),
+  验收 scripts/dx_keystate_smoke.py; DirectInput 游戏还需 dinput8!GetDeviceState
+  钩子(留位未实现)。
+- **大漠键鼠反编译对照结论(2026-10-29, dm.dll 7.2642+组件 7.2319)**:
+  GetCursorPos=虚拟光标客户区坐标(已对齐, 真人动鼠标不影响读数);
+  KeyPress 修饰键 L/R→通用 VK 归一化+虚拟 Alt 追踪(后续键转 SYSKEY, 已对齐
+  dmcore do_key); MoveTo 越界客户区拒绝(已对齐 DmSoft.MoveTo);
+  **SendString 大漠真身是 WM_IME_CHAR(0x286)**(wParam=ANSI 字节大端打包,
+  老 ANSI 窗口用), 我们 WM_CHAR UTF-16 —— 龙之谷打字不通时换这个配方;
+  FindColor dir 1-7 扫描序未复刻(现只支持 0/取末位); 假激活深家族
+  (SHOWWINDOW/WINDOWPOS*)是大漠功能哈希门控的选配模式, 未复刻(无条件过滤
+  会破坏窗口管理)。
+- **模拟器宿主窗口对合成消息免疫**(实测: 消息送达但无反应, 非 raw input、
+  非激活门槛, 走自有输入通道)—— 模拟器后台输入一律用 adb(AdbTarget),
+  别往 LDPlayerMainFrame/RenderWindow 打 win32 消息。
 - **PostMessage 依赖目标从消息循环读输入**: DirectInput/RawInput 的游戏免疫,
   那种目标要换前台 SendInput 通道(留位未实现)。
+- **d3d9 Present 转发必须真尾跳**(实测): Win10 d3d9!Present 检查调用来源,
+  detour 里用 `call` 转发(栈上多一层外来帧/返址)第一次 Present 即崩
+  (Eip 落栈页 DEP); `__attribute__((musttail))` 尾跳后栈布局与应用直调一致,
+  捕获在跳前完成(dmcore.c our_present, 2026-10 会诊)。同病根预防: 给目标
+  进程挂任何"转发壳"都要想一下栈上会不会多出外来帧。
 - **DPI**: 用前 `ensure_dpi_aware()`, 非 100% 缩放下坐标=物理像素。
+- **自建注入器会被 Defender 拦**(injector64.exe 反复被隔离; injector32 未被标记):
+  dx 通道在 64 位目标上使用前, 需管理员加一次排除
+  `Add-MpPreference -ExclusionPath <repo>\imgbot\dx\bin`(仅产物目录)。
+- **模块隐藏的边界**(dx.hide_module): 摘 PEB 三链 → 模块枚举/扫链不可见;
+  按名 `GetModuleHandle` 走 LdrpHashTable 仍可解析(摘哈希表需扫 ntdll 未导出
+  全局, 不做)。反作弊扫模块列表的场景已够用。

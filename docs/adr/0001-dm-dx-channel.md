@@ -20,9 +20,13 @@ Present 挂钩均有反编译), 其接口定义经 20 年量产验证。用户�
    docs/ref/damo-BindWindow*.txt。现有能力自然落入该词汇: normal=前台截屏、
    gdi≈PrintWindow、windows=PostMessage; dx.* 族由注入件实现。
 2. **注入件为 C DLL, 以 `[dx]` extra 发布**(复刻 [ocr] 惰性导入架构), 源码+构建
-   脚本进本仓库; x86/x64 双构建(zig cc)。注入 = SetWindowsHookEx, 通信 =
-   PID 命名共享内存 + 事件对; 全部挂钩(COM vtable/wndproc/IAT)为指针替换,
-   不引入指令重写引擎。
+   脚本进本仓库; x86/x64 双构建(zig cc)。注入 = 同位宽 CreateRemoteThread 两跳
+   (远程 LoadLibraryW + 远程 DxInit, 2026-10-29 修订: 原文 SetWindowsHookEx 为
+   大漠原机制, 实施选了更简的两跳注入); 通信 = PID 命名共享内存**纯轮询**
+   (心跳计数 + cmd_seq/ack_seq 应答, 原文的"事件对"未采用); 全部挂钩
+   (hotpatch/wndproc 子类化/COM 代理)为指针级替换, 不引入指令重写引擎。
+   注入件内置 VEH 崩溃环形诊断(异常码/地址/栈转储写共享内存)——d3d9 挂载
+   排障设施, 进程级侵入, 随 CMD_RAWINFO 同属诊断面。
 3. **范围**: 核心四类全量(后台设置 28 / 图色 57 / 键鼠 34 / 窗口 39)+ 基本设置
    子集; 防护盾取模块隐藏(PEB LDR unlink)不照接口; 变速齿轮做(IAT hook 时间函数)。
    跳过: 内存/字库 OCR/答题/Foobar/文件/系统/杂项/汇编/算法; 驱动级键鼠留位不建
@@ -31,10 +35,16 @@ Present 挂钩均有反编译), 其接口定义经 20 年量产验证。用户�
    - 阶段1 注入骨架 + IPC + d3d9 Present vtable hook 图色(验收: <5ms/帧,
      停靠/遮挡/最小化三态可截);
    - 阶段2 dx 键鼠(wndproc 接管+消息配方+假激活)+ 模块隐藏(验收: 后台键盘死案翻案);
-   - 阶段3 dinput 补丁(按需)+ 变速齿轮。
+   - 阶段3 键态钩子(2026-10-29 落地: 钩 user32!GetKeyState/GetAsyncKeyState 喂
+     虚拟按住态, 大漠原版机制由当日反编译 7.2319 组件确认; dinput8!GetDeviceState
+     钩子仍留位)+ 变速齿轮。
    DmSoft 接口面一次写全, 未点亮阶段的模式返回明确错误码。
 5. 大漠源码包与 711 函数反编译库存于 reverse-skill 仓, 按地址随查; 不再逆向
    dm.dll(宿主侧逻辑 Python 重写, 其 400 方法语义已在 damo-api.md)。
+   2026-10-29 补: dm.dll 7.2642 主插件(444 方法)与组件端已全量反编译
+   (reverse-skill/work/dm2642, work/dm), 键鼠配方 0x837/0x838 细节(焦点路由/
+   RIT 同步/手动 TranslateMessage/虚拟状态喂键态钩子)已按反编译原文对齐进
+   dmcore.c, 此后以反编译库为准、不再凭文档推测配方。
 
 ## 后果
 
@@ -43,4 +53,6 @@ Present 挂钩均有反编译), 其接口定义经 20 年量产验证。用户�
 - 注入失败模式 = 崩单个游戏(有细缝停靠作回退通道); 蓝屏面为零(无内核件)。
 - MMO 上变速为服务器可见行为, 封号风险由消费项目自裁, 本库不设防。
 - 龙之谷死案(WM_KEYDOWN 无效)预期由阶段 2 翻案; 若根因是 async 轮询则依赖
-  阶段 3 补丁, 届时再验。
+  阶段 3 补丁, 届时再验。(2026-10-29 注: kspoll 靶已坐实"消息全送达但
+  GetAsyncKeyState 读 0"的免疫根因, 键态钩子解法验收通过; 龙之谷真机待验,
+  若其为 DirectInput 轮询则仍需 dinput8 钩子。)

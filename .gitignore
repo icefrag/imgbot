@@ -1,3 +1,9 @@
 __pycache__/
 *.pyc
 .venv/
+
+# dx 注入件构建产物(zig 构建, 不入库)
+imgbot/dx/bin/
+
+# 运行产物(烟测截图/日志, 不入库)
+logs/
