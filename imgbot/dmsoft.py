@@ -26,12 +26,12 @@ import numpy as np
 
 from . import vision
 from .win32.capture import capture_client, capture_screen
-from .win32.input import MouseKeyboard, send_paste
+from .win32.input import MouseKeyboard
 from .win32.window import GameWindow, ensure_dpi_aware
 
 
-def _bgr(damo_color: str) -> tuple[int, int, int]:
-    """"RRGGBB" 或 "RRGGBB-DRDGDB" → BGR 元组(带偏差的取首色, 偏差并入 tol)。"""
+def _bgr(damo_color: str) -> tuple[tuple[int, int, int], int]:
+    """"RRGGBB" 或 "RRGGBB-DRDGDB" → (BGR 元组, 容差)(带偏差的取首色, 偏差并入 tol)。"""
     head = damo_color.split("-")[0]
     r, g, b = int(head[0:2], 16), int(head[2:4], 16), int(head[4:6], 16)
     tol = 0
@@ -113,6 +113,7 @@ class DmSoft:
         if self._dx is not None:
             self._dx.unbind()
         self._win = self._mk = self._dx = self._dxmk = None
+        self._display = None
         return 1
 
     def ForceUnBindWindow(self, hwnd: int) -> int:
@@ -227,17 +228,14 @@ class DmSoft:
     def Capture(self, x1, y1, x2, y2, file, *_):
         """截取区域存 BMP; 存档格式按扩展名(PNG/JPG 同 CapturePng/CaptureJpg)。"""
         img = self._screen()[y1:y2, x1:x2]
-        cv2.imwrite(file, img)
-        return 1
+        return 1 if cv2.imwrite(file, img) else 0
 
     def CapturePng(self, x1, y1, x2, y2, file):
-        cv2.imwrite(file, self._screen()[y1:y2, x1:x2])
-        return 1
+        return 1 if cv2.imwrite(file, self._screen()[y1:y2, x1:x2]) else 0
 
     def CaptureJpg(self, x1, y1, x2, y2, file, quality=90):
-        cv2.imwrite(file, self._screen()[y1:y2, x1:x2],
-                    [cv2.IMWRITE_JPEG_QUALITY, quality])
-        return 1
+        return 1 if cv2.imwrite(file, self._screen()[y1:y2, x1:x2],
+                                [cv2.IMWRITE_JPEG_QUALITY, quality]) else 0
 
     def GetColor(self, x, y, _bpp=0) -> str:
         """取色, 返回 "RRGGBB"(大漠格式)。"""
@@ -277,14 +275,16 @@ class DmSoft:
     def FindPic(self, x1, y1, x2, y2, pic_name, delta_color="000000", sim=0.9,
                 dir=0, *_):
         """找图(pic_name 支持 "a.bmp|b.bmp" 多模板)。返回 (找到的序号, x, y);
-        未找到 (-1, -1, -1) —— 对应大摩 FindPicE 语义与 FindPic 出参的合体。"""
+        未找到 (-1, -1, -1) —— x,y 为模板左上角(大漠语义; vision.find 返回中心,
+        此处换算回去, 移植老脚本点击才不错位)。"""
         names = pic_name.split("|")
         screen = self._screen()
         for idx, name in enumerate(names):
-            hit = vision.find(screen, vision.load(name), threshold=sim,
+            tpl = vision.load(name)
+            hit = vision.find(screen, tpl, threshold=sim,
                               region=(x1, y1, x2, y2))
-            if hit:
-                return idx, hit[0], hit[1]
+            if hit:  # 中心 → 左上角(大漠 FindPic 语义)
+                return idx, hit[0] - tpl.shape[1] // 2, hit[1] - tpl.shape[0] // 2
         return -1, -1, -1
 
     def FindPicE(self, x1, y1, x2, y2, pic_name, delta_color="000000", sim=0.9,
@@ -416,7 +416,6 @@ class DmSoft:
         if hasattr(mk, "wheel"):
             mk.wheel(up=delta > 0)
         else:
-            from .win32.input import WM_MOUSEMOVE
             x, y = mk._pos
             self._win.post_message(0x020A, (delta & 0xFFFF) << 16, (y & 0xFFFF) << 16 | (x & 0xFFFF))
 
@@ -443,24 +442,38 @@ class DmSoft:
             raise NotImplementedError("windows 通道键盘历史死案, 用 keypad='dx'/'normal'")
         return 1
 
+    def _need_dxmk(self):
+        if self._dxmk is None:
+            raise RuntimeError(
+                "该接口需要 dx 键鼠通道(BindWindow mouse/keypad 含 'dx')")
+
     def KeyDown(self, vk):
-        self._need_dx()
+        self._need_dxmk()
         self._dxmk.key_down(vk)
         return 1
 
     def KeyUp(self, vk):
-        self._need_dx()
+        self._need_dxmk()
         self._dxmk.key_up(vk)
         return 1
 
     def KeyPressChar(self, key_str: str):
-        return self.KeyPress(_vk_of_char(key_str))
+        vk, shift = _vk_of_char(key_str)
+        if shift:
+            self.KeyDown(0x10)
+            self.KeyPress(vk)
+            self.KeyUp(0x10)
+        else:
+            self.KeyPress(vk)
+        return 1
 
     def KeyDownChar(self, key_str: str):
-        return self.KeyDown(_vk_of_char(key_str))
+        vk, _shift = _vk_of_char(key_str)
+        return self.KeyDown(vk)
 
     def KeyUpChar(self, key_str: str):
-        return self.KeyUp(_vk_of_char(key_str))
+        vk, _shift = _vk_of_char(key_str)
+        return self.KeyUp(vk)
 
     def KeyPressStr(self, key_str: str, delay=50):
         for ch in key_str:
@@ -469,43 +482,33 @@ class DmSoft:
         return 1
 
     def SendString(self, hwnd: int, str_: str):
-        """向指定窗口打字(与绑定通道无关, 大漠语义)。"""
+        """向指定窗口打字(与绑定通道无关, 大漠语义)。三条键鼠通道都实现
+        type_text; 未绑定(全 None)显式报错而非裸崩。"""
         if self._dxmk is not None:
             self._dxmk.type_text(str_)
-        elif self._mk is not None and hasattr(self._mk, "type_text"):
+        elif self._mk is not None:
             self._mk.type_text(str_)             # 前台: SendInput UNICODE 注字符
         else:
-            from .win32.input import WM_CHAR
-            data = str_.encode("utf-16-le")
-            for i in range(0, len(data), 2):
-                self._win.post_message(WM_CHAR, int.from_bytes(data[i:i+2], "little"), 1)
-                time.sleep(0.03)
+            raise RuntimeError("未 BindWindow, 无键鼠通道可发字符串")
         return 1
 
     def SendPaste(self, hwnd: int):
-        send_paste(self._win, "")
+        """向绑定窗口模拟 Ctrl+V(大漠语义: 粘贴剪贴板现状, 不改写内容)。"""
+        self._win.post_message(0x0302, 0, 0)               # WM_PASTE
         return 1
 
     def GetCursorPos(self):
         """虚拟光标位置(客户区坐标)。大漠语义: 绑定了键鼠通道返回注入跟踪位
         (反编译 GetCursorPos 辅助: dx 通道查组件虚拟位/宿主 ctx+0x50), 而非
-        系统光标 —— 后台自动化时真人动鼠标不影响读数。未绑键鼠返回真实光标
-        换算到绑定窗口客户区。"""
+        系统光标 —— 后台自动化时真人动鼠标不影响读数。"""
         if self._win is None:
             import ctypes
             import ctypes.wintypes as wt
             pt = wt.POINT()
             ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
             return pt.x, pt.y
-        mk = self._mk_()
-        if mk is not None:
-            return mk._pos
-        import ctypes
-        import ctypes.wintypes as wt
-        pt = wt.POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-        ctypes.windll.user32.ScreenToClient(self._win.hwnd, ctypes.byref(pt))
-        return pt.x, pt.y
+        # 走到这说明 _mk_() 会因键鼠通道未绑直接 raise, 没有 None 回退路径
+        return self._mk_()._pos
 
     # ================= 窗口(核心) =================
     def FindWindow(self, class_name, title="") -> int:
@@ -577,7 +580,10 @@ class DmSoft:
         return self._last_error
 
 
-def _vk_of_char(ch: str) -> int:
-    """单字符 → 虚拟键码(字母/数字/常用符号, US 布局)。"""
+def _vk_of_char(ch: str) -> tuple[int, bool]:
+    """单字符 → (虚拟键码, 是否需 Shift), US 布局; 无映射抛错而非发 0xFF。"""
     import ctypes
-    return int(ctypes.windll.user32.VkKeyScanW(ord(ch))) & 0xFF
+    r = int(ctypes.windll.user32.VkKeyScanW(ord(ch)))
+    if r == -1:
+        raise ValueError(f"字符 {ch!r} 在当前键盘布局无虚拟键映射")
+    return r & 0xFF, bool(r & 0x0100)   # 高字节 bit0 = 需 Shift, 不能被 & 0xFF 丢弃

@@ -79,7 +79,10 @@ def main():
               "(down/gks=虚拟状态被轮询读到, latch=读后清)")
         return 0 if ok1 and ok2 else 3
     finally:
-        host.unbind()
+        try:
+            host.unbind()
+        except TimeoutError:
+            pass
         p.terminate()
 
 

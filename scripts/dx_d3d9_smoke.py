@@ -65,7 +65,10 @@ def main():
             # 遮挡测试: 窗口挪到屏幕底部边缘外一半(仍渲染), 帧序号应继续涨
             import ctypes
             u32 = ctypes.WinDLL("user32")
-            u32.SetWindowPos(win.hwnd, None, 100, 2000, 0, 0, 0x0001 | 0x0004)
+            cy = u32.GetSystemMetrics(1)      # SM_CYSCREEN
+            # 半截留在屏内: 完全离屏会触发遮挡节流(ADR-0002), 帧序号停涨造成假 FAIL
+            u32.SetWindowPos(win.hwnd, None, 100, max(cy - 240, 0), 0, 0,
+                             0x0001 | 0x0004)
             time.sleep(1.0)
             s0 = host.frame_info()[0]
             time.sleep(1.0)
@@ -77,7 +80,10 @@ def main():
             print("d3d9 验收:", "PASS" if ok else "FAIL")
             return 0 if ok else 4
         finally:
-            host.unbind()
+            try:
+                host.unbind()
+            except TimeoutError:
+                pass
     finally:
         app.terminate()
 

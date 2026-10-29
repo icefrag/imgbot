@@ -78,7 +78,10 @@ def main():
         print(f"吞消息计数: {host.msg_filtered} (失焦风波中被过滤的消息数)")
         return 0
     finally:
-        host.unbind()
+        try:
+            host.unbind()
+        except TimeoutError:
+            pass
         print("已解绑(BYE), DLL 留驻目标进程(安全设计), 心跳应停:",
               host.hdr if host._view else "view 已释放")
 

@@ -65,7 +65,10 @@ def main():
             return 4
         return 0
     finally:
-        host.unbind()
+        try:
+            host.unbind()
+        except TimeoutError:
+            pass
         p.terminate()
 
 

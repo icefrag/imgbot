@@ -179,6 +179,7 @@ class GameWindow:
                 n = user32.GetWindowTextLengthW(hwnd)
                 if n:
                     title = ctypes.create_unicode_buffer(n + 1)
+                    user32.GetWindowTextW(hwnd, title, n + 1)
                     if title_keyword in title.value and by_title is None:
                         by_title = GameWindow(hwnd)
             return True

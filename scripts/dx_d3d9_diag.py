@@ -56,8 +56,10 @@ def hx(v):
 
 
 def main():
-    mask = int(sys.argv[1], 0) if len(sys.argv) > 1 else 0   # 0=全开(默认行为)
-    nohook = "--nohook" in sys.argv
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    pos = [a for a in sys.argv[1:] if not a.startswith("--")]
+    mask = int(pos[0], 0) if pos else 0                    # 0=全开(默认行为)
+    nohook = "--nohook" in flags
     app = subprocess.Popen([str(BIN / "d3d9test32.exe")])
     try:
         win = None
@@ -80,7 +82,6 @@ def main():
             if nohook:
                 print("nohook 模式: 只注入不挂钩, 纯环境对照, 等 12 秒")
                 time.sleep(12)
-                h = host.hdr
                 print(f"nohook -> {'存活' if app.poll() is None else '死了'}")
                 return 0
             host.hook_d3d9()
@@ -147,11 +148,9 @@ def main():
             # Eip 处 256 字节(快照尾段)
             eipz = bytes((ctypes.c_char * 256).from_address(
                 host._view + 0x200000 + 64 + 0x10000))
-            base_off = 128   # Eip-128 起
-            print(f"Eip 前后字节(Eip-128..+128):")
+            print("Eip 前后字节(Eip-128..+128):")
             for k in range(0, 256, 16):
                 print(f"  {eip-128+k:08X}: " + " ".join(f"{x:02X}" for x in eipz[k:k+16]))
-            return 0
             print(f"Eip所在模块={'无(裸地址)' if not d[18] else hx(d[18])}")
             for who, off in (("Eip", 24), ("Esp", 28)):
                 t, pr, ab, st = d[off], d[off+1], d[off+2], d[off+3]

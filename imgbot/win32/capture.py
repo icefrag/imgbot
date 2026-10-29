@@ -102,12 +102,20 @@ def capture_screen(rect=None) -> np.ndarray:
         raise CaptureError("GetDC(None) 失败: %d" % ctypes.get_last_error())
     hdc_mem = gdi32.CreateCompatibleDC(hdc_scr)
     hbmp = gdi32.CreateCompatibleBitmap(hdc_scr, w, h)
-    gdi32.SelectObject(hdc_mem, hbmp)
+    if not hdc_mem or not hbmp:
+        if hbmp:
+            gdi32.DeleteObject(hbmp)
+        if hdc_mem:
+            gdi32.DeleteDC(hdc_mem)
+        user32.ReleaseDC(None, hdc_scr)
+        raise CaptureError("CreateCompatibleDC/Bitmap 失败: %d" % ctypes.get_last_error())
+    old_bmp = gdi32.SelectObject(hdc_mem, hbmp)   # 选入时的原位图要选回, 否则 Delete 静默失败泄漏
     try:
         if not gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_scr, x, y, SRCCOPY):
             raise CaptureError("BitBlt 失败: %d" % ctypes.get_last_error())
         img = _dib_to_bgr(hdc_mem, hbmp, w, h)
     finally:
+        gdi32.SelectObject(hdc_mem, old_bmp)
         gdi32.DeleteObject(hbmp)
         user32.ReleaseDC(None, hdc_scr)
         gdi32.DeleteDC(hdc_mem)

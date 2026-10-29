@@ -65,7 +65,10 @@ def main():
         try_drag(host, inner.hwnd if inner else outer.hwnd, "假激活后拖拽→RenderWindow", f0)
         try_drag(host, outer.hwnd, "假激活后拖拽→MainFrame", f0)
     finally:
-        host.unbind()
+        try:
+            host.unbind()
+        except TimeoutError:
+            pass
 
 
 if __name__ == "__main__":

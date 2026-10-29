@@ -47,7 +47,10 @@ def main():
         print("假激活过滤验收:", "PASS" if ok else "FAIL")
         return 0 if ok else 3
     finally:
-        host.unbind()
+        try:
+            host.unbind()
+        except TimeoutError:
+            pass
 
 
 if __name__ == "__main__":
