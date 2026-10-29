@@ -138,13 +138,23 @@ def _flat_hit(screen_gray: np.ndarray, x: int, y: int, h: int, w: int) -> bool:
     return float(screen_gray[y:y + h, x:x + w].std()) < FLAT_EPS
 
 
+def _crop(screen_bgr: np.ndarray, region: tuple[int, int, int, int]):
+    """按 region=(x1,y1,x2,y2) 裁一块 BGR(uint8), 返回 (子图, 偏移x, 偏移y)."""
+    x1, y1, x2, y2 = region
+    return screen_bgr[y1:y2, x1:x2], x1, y1
+
+
 def find(screen_bgr: np.ndarray, tpl: np.ndarray,
-         threshold: float = DEFAULT_THRESHOLD) -> tuple[int, int, float] | None:
+         threshold: float = DEFAULT_THRESHOLD,
+         region: tuple[int, int, int, int] | None = None) -> tuple[int, int, float] | None:
     """单目标模板匹配, 返回(中心x, 中心y, 分数); 低于阈值返回 None.
 
     零方差防虚高(LZG_PMH 移植): 纯色模板/纯色命中区上的相关系数无意义, 一律判未命中.
+    region=(x1,y1,x2,y2) 只在矩形内搜, 返回**全屏**坐标(与 find_color 族同口径);
+    None=全屏. 位置固定的元素必须限矩形(全屏搜关闭X曾在世界翅膀上得0.94误报).
     """
-    m = _match(screen_bgr, tpl)
+    sub, ox, oy = (screen_bgr, 0, 0) if region is None else _crop(screen_bgr, region)
+    m = _match(sub, tpl)
     if m is None:
         return None
     _, score, _, loc = cv2.minMaxLoc(m.result)
@@ -152,7 +162,7 @@ def find(screen_bgr: np.ndarray, tpl: np.ndarray,
         return None
     if _flat_hit(m.gray, loc[0], loc[1], m.h, m.w):
         return None
-    return loc[0] + m.w // 2, loc[1] + m.h // 2, score
+    return ox + loc[0] + m.w // 2, oy + loc[1] + m.h // 2, score
 
 
 def find_any(screen_bgr: np.ndarray, names: list[str],

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import random
 import time
+from typing import NamedTuple
 
 import numpy as np
 
@@ -62,3 +63,67 @@ def wait_tap(device: AdbDevice, name: str | np.ndarray, timeout: float = 30,
     if log is not None:
         log(f"wait_tap 命中并点击 ({hit[0]},{hit[1]}) score={hit[2]:.2f}")
     return hit
+
+
+class TapTarget(NamedTuple):
+    """表驱动的一项: 等它出现 → 点它.
+
+    name: 模板文件名(vision.load 缓存).
+    point: 点击坐标; None=点模板命中中心. 模板认界面、点击走固定坐标时用它
+           (广告页X认模板但点在固定处, 点命中处会误触「立即前往」).
+    region: 搜索矩形 (x1,y1,x2,y2); None=全屏. 位置固定的元素必须限矩形.
+    threshold: 该项的匹配阈值, None=用默认.
+    """
+    name: str
+    point: tuple[int, int] | None = None
+    region: tuple[int, int, int, int] | None = None
+    threshold: float | None = None
+
+
+def wait_tap_any(device: AdbDevice, targets: list[TapTarget], timeout: float = 30,
+                 interval: float = 0.4, until: set[str] | None = None,
+                 stop_event=None, log=None) -> set[str]:
+    """表驱动轮询: 一组模板里**谁出现点谁**(不讲顺序), 循环到超时或 until 集合集齐.
+
+    targets: [TapTarget, ...] —— 每项一个模板 + 点击方式, 见 TapTarget.
+    until: 这些模板名都出现过即提前结束(达成即止); None=只按 timeout 收口.
+    返回: 本轮点过的模板名集合(点过哪些).
+
+    与 wait_tap(单模板)的区别: 这个是多目标表驱动, 谁先出现先点谁.
+    与"有序序列"的区别: 不保证顺序 —— 同一帧多个都在时按 targets 顺序点第一个,
+    下一轮再点剩下的(避免一帧多点把画面点乱).
+
+    一帧多查: 一轮截图里把 targets 全部找完(省截图), 命中项点完继续下一轮.
+    stop_event 置位立即停止(与 vision.wait_find 同语义: 停止优先, 不再点).
+    模板文件缺失的项跳过(素材可渐进添加, 不让整表崩).
+    """
+    deadline = time.monotonic() + timeout
+    tpls = []
+    for t in targets:
+        try:
+            tpls.append((t, vision.load(t.name)))
+        except FileNotFoundError:
+            continue
+    done: set[str] = set()
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            return done
+        screen = vision.decode_png(device.screenshot())
+        for t, tpl in tpls:
+            if t.name in done:
+                continue
+            thr = t.threshold if t.threshold is not None else vision.DEFAULT_THRESHOLD
+            hit = vision.find(screen, tpl, thr, t.region)
+            if not hit:
+                continue
+            x, y = t.point if t.point is not None else (hit[0], hit[1])
+            tap(device, x, y)
+            done.add(t.name)
+            if log is not None:
+                log(f"wait_tap_any 命中并点击 「{t.name}」({x},{y}) score={hit[2]:.2f}")
+            break                       # 一帧只点一个: 下一轮重新截图再点剩下的
+        if until is not None and until <= done:
+            return done
+        if time.monotonic() >= deadline:
+            return done
+        time.sleep(interval)

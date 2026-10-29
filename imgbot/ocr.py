@@ -11,6 +11,12 @@ from difflib import SequenceMatcher
 _engines: dict[bool, object] = {}
 
 
+# onnxruntime 每模型推理线程数(2026-10-28): 默认-1=吃满全部核——16核机单次全屏OCR
+# 3s墙钟烧23s CPU(7.7x放大), 多开worker各自OCR互相叠加直接把CPU打满(实测主控558%),
+# 而模拟器本体才各~1核. 封顶后放大倍数≈线程数.
+ORT_INTRA_THREADS = 2
+
+
 def engine(fast: bool = False):
     """取 OCR 单例引擎(消费项目的等级读取等可直接用, 免各自建单例).
 
@@ -20,8 +26,12 @@ def engine(fast: bool = False):
     """
     if fast not in _engines:
         from rapidocr_onnxruntime import RapidOCR
-        _engines[fast] = RapidOCR(det_limit_side_len=736, det_limit_type='max') if fast \
-            else RapidOCR()
+        # 必须走**无前缀Global键**: 本版rapidocr的UpdateParameters有bug——带前缀的
+        # det_/rec_线程键会被 Global(-1) 反向覆盖; 只有Global键经 update_global_to_module
+        # 复制进三个模型段才生效(2026-10-28 实测 det_前缀传了等于没传)
+        caps = dict(intra_op_num_threads=ORT_INTRA_THREADS)
+        _engines[fast] = RapidOCR(det_limit_side_len=736, det_limit_type='max', **caps) if fast \
+            else RapidOCR(**caps)
     return _engines[fast]
 
 

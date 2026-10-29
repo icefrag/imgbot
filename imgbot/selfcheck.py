@@ -6,6 +6,7 @@ ocr 纯逻辑 / readout 逐字读数 / win32 后台键鼠+截图(离线窗口).
 import ctypes
 import ctypes.wintypes as wt
 import random
+import re
 import tempfile
 import threading
 import time
@@ -19,11 +20,11 @@ from . import actions, adb as adb_mod
 from . import ime, vision
 from .ocr import best_match
 from .readout import enlarge, read_digits
-from .win32.capture import capture_client
+from .win32.capture import capture_client, capture_screen, virtual_screen_rect
 from .win32.input import (CF_UNICODETEXT, WM_CHAR, WM_LBUTTONDOWN, WM_LBUTTONUP,
                           WM_MOUSEMOVE, WM_PASTE, MouseKeyboard, human_path,
                           send_paste)
-from .win32.window import GameWindow
+from .win32.window import GameWindow, list_windows, xor_frame
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -230,6 +231,71 @@ def main():
     assert vision.wait_find(lambda: screen.copy(), tpl, timeout=5,
                             interval=0.05) is not None  # 无 stop_event 时正常命中
 
+    # ---- wait_tap_any: 表驱动"谁出现点谁"(命中即点/固定点/until集齐/超时/stop) ----
+    # 两个模板用**不同形状的确定图案**(纯随机纹理会互相关误命中: 同分布噪声块之间
+    # 相关系数也能很高), 贴到干净底上; 底色远离图案色, 保证互不误命中
+    pat_a = np.zeros((40, 120, 3), np.uint8)
+    pat_a[:, ::2] = (250, 250, 250)          # 竖条纹
+    pat_b = np.zeros((40, 120, 3), np.uint8)
+    pat_b[::2, :] = (250, 250, 250)          # 横条纹
+    tpl_a = cv2.cvtColor(pat_a, cv2.COLOR_BGR2GRAY)
+    tpl_b = cv2.cvtColor(pat_b, cv2.COLOR_BGR2GRAY)
+    clean = np.full((540, 960, 3), 40, np.uint8)
+    frame_a = clean.copy()
+    frame_a[100:140, 300:420] = pat_a
+    frame_b = clean.copy()
+    frame_b[300:340, 600:720] = pat_b
+    taps2, logs2 = [], []
+    tbl = {"a.png": tpl_a, "b.png": tpl_b}
+
+    def _fake_load(n):
+        if n not in tbl:
+            raise FileNotFoundError(n)   # 与 vision.load 真实行为一致
+        return tbl[n]
+
+    with mock.patch.object(actions, "tap", lambda dev, x, y, **_: taps2.append((x, y))), \
+         mock.patch.object(vision, "load", _fake_load):
+        tgts = [actions.TapTarget("a.png"), actions.TapTarget("b.png", point=(111, 222))]
+        # 谁出现点谁: 帧里只有 a → 点 a 的命中中心
+        got = actions.wait_tap_any(_FakeDev([frame_a]), tgts, timeout=1, interval=0.02,
+                                   log=logs2.append)
+        assert got == {"a.png"}, got
+        assert taps2 == [(360, 120)], taps2
+        # b 的固定点击点: 命中处不是点击点
+        taps2.clear()
+        got = actions.wait_tap_any(_FakeDev([clean, frame_b]), tgts, timeout=2,
+                                   interval=0.02, log=logs2.append)
+        assert got == {"b.png"}, got
+        assert taps2 == [(111, 222)], taps2
+        # until 集齐即止: 两个都点到才收口, 不等满 timeout
+        taps2.clear()
+        t0 = time.monotonic()
+        got = actions.wait_tap_any(_FakeDev([frame_a, frame_b]), tgts, timeout=30,
+                                   interval=0.02, until={"a.png", "b.png"})
+        assert got == {"a.png", "b.png"}, got
+        assert time.monotonic() - t0 < 5, "until 集齐应提前收口, 不等满 timeout"
+        # 超时: 一个都没出现 → 空集合
+        taps2.clear()
+        got = actions.wait_tap_any(_FakeDev([clean]), tgts, timeout=0.25, interval=0.05)
+        assert got == set() and taps2 == [], (got, taps2)
+        # stop_event: 置位立即停, 不再点
+        taps2.clear()
+        ev3 = threading.Event()
+        ev3.set()
+        got = actions.wait_tap_any(_FakeDev([frame_a]), tgts, timeout=30, interval=0.05,
+                                   stop_event=ev3)
+        assert got == set() and taps2 == [], (got, taps2)
+        # 缺模板的项跳过, 不让整表崩(素材渐进添加)
+        got = actions.wait_tap_any(_FakeDev([frame_a]),
+                                   [actions.TapTarget("missing.png"), actions.TapTarget("a.png")],
+                                   timeout=1, interval=0.02)
+        assert got == {"a.png"}, got
+
+    # region 限定: 只在矩形内搜, 返回全屏坐标
+    hit_r = vision.find(screen, tpl, region=(300, 100, 420, 140))
+    assert hit_r and abs(hit_r[0] - 360) <= 1 and abs(hit_r[1] - 120) <= 1, hit_r
+    assert vision.find(screen, tpl, region=(700, 400, 900, 500)) is None  # 矩形外 → 未命中
+
     # ---- 多点找色(Pt 规范): 矩形范围 / 全点命中 / 变体色 / 反色 / 方向 / 逐通道容差 ----
     canvas = rng.integers(40, 90, (540, 960, 3), dtype=np.uint8)  # 噪底远离特征色
     c1, c2, c3 = (220, 30, 180), (30, 200, 40), (250, 220, 30)
@@ -418,6 +484,52 @@ def main():
     finally:
         cleanup()
 
+    # ---- win32: 屏幕截取(前台 BitBlt, 与 PrintWindow 后台互补; 用纯色窗口验色) ----
+    # 依赖"该窗口当前可见": 桌面随便开个窗口盖住它就会拍到别的东西 —— 先提 TOPMOST 再拍
+    _user32.SetWindowPos.restype = wt.BOOL
+    _user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, ctypes.c_int, wt.UINT]
+    _TOPMOST, _NOTOPMOST, _SWP = -1, -2, 0x0003  # SWP_NOSIZE | SWP_NOMOVE
+    vh3, cleanup3 = create_visible_window(120, 60, (30, 200, 90))
+    try:
+        time.sleep(0.3)
+        sx, sy, sw, sh = GameWindow(vh3).client_rect()
+        _user32.SetWindowPos(vh3, _TOPMOST, 0, 0, 0, 0, _SWP)
+        shot = None
+        for _ in range(3):  # 前台合成有竞态, 全黑重试
+            shot = capture_screen((sx, sy, sw, sh))
+            if int(shot.max()) > 0:
+                break
+            time.sleep(0.25)
+        assert shot.shape[:2] == (sh, sw), shot.shape
+        assert int(shot.max()) > 0, "屏幕截取全黑: 前台合成未就绪"
+        b, g, r = shot[sh // 2, sw // 2]
+        assert abs(int(b) - 90) <= 6 and abs(int(g) - 200) <= 6 and abs(int(r) - 30) <= 6, (b, g, r)
+        vx, vy, vw, vht = virtual_screen_rect()
+        assert capture_screen().shape[:2] == (vht, vw), "全虚拟屏幕截取尺寸与 virtual_screen_rect 不符"
+        assert any(t == "imgbot-selfcheck" for _h, _c, t in list_windows()), \
+            "刚创建的可见窗口应出现在 list_windows 里"
+    finally:
+        _user32.SetWindowPos(vh3, _NOTOPMOST, 0, 0, 0, 0, _SWP)
+        cleanup3()
+
+    # ---- win32: 拾取高亮(xor_frame XOR 自逆: 画+擦往返不残留)与 window_rect ----
+    vh4, cleanup4 = create_visible_window(120, 60, (30, 200, 90))
+    try:
+        l, t, r, b = GameWindow(vh4).window_rect()
+        assert r > l and b > t, ((l, t, r, b),)
+        xor_frame((l, t, r, b))
+        xor_frame((l, t, r, b))  # 第二次应还原屏幕(自逆), 不炸即通过
+        assert GameWindow(vh4).pid() > 0, "窗口应归属一个活着的进程"
+        assert GameWindow(vh4).process_path().endswith(".exe"), "应取到本进程可执行路径"
+        hbtn = _user32.CreateWindowExW(0, "BUTTON", "子按钮", 0x50000000,  # WS_CHILD|WS_VISIBLE
+                                       10, 10, 50, 20, vh4, None, None, None)
+        assert hbtn, "创建子按钮失败"
+        sub = GameWindow.find(class_name="BUTTON", parent=vh4)
+        assert sub is not None and sub.hwnd == hbtn, "find(parent=) 应在子孙里按类名找到子窗口"
+    finally:
+        cleanup4()
+
     # ---- win32: 伪最小化停靠往返(状态位必须跟着 park 走, 曾恒为 False) ----
     vh2, cleanup2 = create_visible_window(200, 100, (30, 200, 90))
     try:
@@ -430,7 +542,84 @@ def main():
     finally:
         cleanup2()
 
+    _check_readme_api()
+    _check_no_swallowed_code()
+
     print("imgbot selfcheck ok")
+
+
+def _check_no_swallowed_code():
+    """防回归: 注释行里不能藏着被挤到同一行的代码(曾两次把赋值写进注释尾, 运行时才炸)."""
+    for p in Path(__file__).resolve().parent.rglob("*.py"):
+        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            s = line.strip()
+            if not s.startswith("#"):
+                continue
+            body = s.lstrip("#").strip()
+            # 注释正文里以赋值/调用开头 = 代码被吞进注释
+            if re.match(r"^[A-Za-z_][\w.]*\s*(=|\(|\[)", body):
+                raise AssertionError(f"{p.name}:{i} 代码被挤进注释: {s}")
+
+
+def _check_readme_api():
+    """README 能力清单的 API 必须真实存在(防文档漂移: 清单是给别的 AI 查用的, 写了没有的
+    API 比不写更糟)。README 在仓库根, 源码在 imgbot/。"""
+    import ctypes as _ct
+    import inspect
+    readme = Path(__file__).resolve().parent.parent / "README.md"
+    if not readme.exists():          # 装成 wheel 后 README 不在包里, 跳过
+        return
+    text = readme.read_text(encoding="utf-8")
+    from . import actions, adb, ime, ocr, readout, target, vision
+    from .win32 import capture
+    from .win32 import input as win_input
+    from .win32 import window
+    modules = [vision, ocr, readout, actions, adb, ime, target,
+               window, capture, win_input]
+    # `模块.名` 形式(可带不带括号): 名必须真实可取(含 win32 子模块的写法)
+    # 模块名按 README 里的简称匹配: vision/ocr/readout/actions/adb/ime/target + win32 三件
+    by_name = {m.__name__.rsplit(".", 1)[-1]: m for m in modules}
+    submodules = {"capture": capture, "input": win_input, "window": window}
+    # 类名也算合法前缀(如 `Target.screenshot` 指的是 target 模块的类)
+    class_names = {n for mod in modules for n, o in vars(mod).items() if inspect.isclass(o)}
+    for m, f in set(re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)\.([A-Za-z_][A-Za-z_0-9]*)`", text)):
+        if f.endswith(".py"):
+            continue
+        mod = submodules.get(m) or by_name.get(m)
+        if mod is None:
+            if m == "imgbot" or m in class_names:
+                continue      # 包路径 / 类名引用
+            raise AssertionError(f"README 引用了未知模块: {m}")
+        if not hasattr(mod, f):
+            raise AssertionError(f"README 引用了不存在的 API: {m}.{f}")
+    # 裸函数名写法 `name(` 也必须真实存在(清单里大量是裸名)
+    # 只认**模块级**函数/类 —— 类的方法名(如 screenshot/tap)也是合法裸名, 不在此列
+    known = set()
+    for mod in modules:
+        known |= {n for n, o in vars(mod).items()
+                  if inspect.isfunction(o) or inspect.isclass(o)}
+    for mod in modules:
+        for cls in [o for o in vars(mod).values() if inspect.isclass(o)]:
+            known |= set(vars(cls).keys())     # 类的方法/属性名也算已知
+    for f in set(re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)\(", text)):
+        if f not in known:
+            raise AssertionError(f"README 引用了不存在的函数: {f}")
+    # 各模块**自己定义**的公开名(函数/类)都应出现在 README 的能力清单段内
+    # (只查清单段: 其它章节提到名字不算数, 否则"漏列"检不出来)
+    start = text.find("## 能力清单")
+    end = text.find("## 色键模板约定")
+    assert start >= 0 and end > start, "README 缺能力清单段"
+    catalog = text[start:end]
+    for mod in modules:
+        for name, obj in vars(mod).items():
+            if name.startswith("_") or not (inspect.isfunction(obj) or inspect.isclass(obj)):
+                continue
+            if getattr(obj, "__module__", "") != mod.__name__:
+                continue          # 别的模块导入进来的, 不算本模块的 API
+            if inspect.isclass(obj) and issubclass(obj, _ct.Structure):
+                continue          # ctypes 结构体是内部实现细节, 不进能力清单
+            if name not in catalog:
+                raise AssertionError(f"README 能力清单漏了: {mod.__name__}.{name}")
 
 
 if __name__ == "__main__":

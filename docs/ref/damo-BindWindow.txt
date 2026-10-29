@@ -1,0 +1,475 @@
+无标题文档
+310
+187
+2010-05-27T13:54:00Z
+2018-06-06T15:30:00Z
+1
+597
+3406
+Microsoft
+28
+7
+3996
+11.6568
+false
+false
+false
+MicrosoftInternetExplorer4
+font-size:10.0pt;
+font-family:"Times New Roman";
+函数简介
+:
+绑定指定的窗口
+,
+并指定这个窗口的屏幕颜色获取方式
+,
+鼠标仿真模式
+,
+键盘仿真模式
+,
+以及模式设定
+,
+高级用户可以参考
+BindWindowEx
+更加灵活强大
+.
+函数原型
+:
+long BindWindow(hwnd,display,mouse,keypad,mode)
+参数定义
+:
+hwnd
+整形数
+:
+指定的窗口句柄
+display
+字符串
+:
+屏幕颜色获取方式 取值有以下几种
+"normal" :
+正常模式
+,
+平常我们用的前台截屏模式
+"gdi" : gdi
+模式
+,
+用于窗口采用
+GDI
+方式刷新时
+.
+此模式占用
+CPU
+较大
+.
+参考
+SetAero
+win10
+以上系统使用此模式，如果截图失败，尝试把目标程序重新开启再试试。
+"gdi2" : gdi2
+模式
+,
+此模式兼容性较强
+,
+但是速度比
+gdi
+模式要慢许多
+,
+如果
+gdi
+模式发现后台不刷新时
+,
+可以考虑用
+gdi2
+模式
+.
+"dx2" : dx2
+模式
+,
+用于窗口采用
+dx
+模式刷新
+,
+如果
+dx
+方式会出现窗口所在进程崩溃的状况
+,
+可以考虑采用这种
+.
+采用这种方式要保证窗口有一部分在屏幕外
+.win7 win8
+或者
+vista
+不需要移动也可后台
+.
+此模式占用
+CPU
+较大
+.
+参考
+SetAero
+.
+win10
+以上系统使用此模式，如果截图失败，尝试把目标程序重新开启再试试。
+"dx3" : dx3
+模式
+,
+同
+dx2
+模式
+,
+但是如果发现有些窗口后台不刷新时
+,
+可以考虑用
+dx3
+模式
+,
+此模式比
+dx2
+模式慢许多
+.
+此模式占用
+CPU
+较大
+.
+参考
+SetAero
+.
+win10
+以上系统使用此模式，如果截图失败，尝试把目标程序重新开启再试试。
+"dx" : dx
+模式
+,
+等同于
+BindWindowEx
+中，
+display
+设置的
+"dx.graphic.2d|dx.graphic.3d"
+,
+具体参考
+BindWindowEx
+mouse
+字符串
+:
+鼠标仿真模式 取值有以下几种
+"normal" :
+正常模式
+,
+平常我们用的前台鼠标模式
+"windows": Windows
+模式
+,
+采取模拟
+windows
+消息方式 同按键自带后台插件
+.
+"windows2": Windows2
+模式
+,
+采取模拟
+windows
+消息方式
+(
+锁定鼠标位置
+)
+此模式等同于
+BindWindowEx
+中的
+mouse
+为以下组合
+"dx.mouse.position.lock.api|dx.mouse.position.lock.message|dx.mouse.state.message"
+"windows3": Windows3
+模式，采取模拟
+windows
+消息方式
+,
+可以支持有多个子窗口的窗口后台
+.
+"dx": dx
+模式
+,
+采用模拟
+dx
+后台鼠标模式
+,
+这种方式会锁定鼠标输入
+.
+有些窗口在此模式下绑定时，需要先激活窗口再绑定
+(
+或者绑定以后激活
+)
+，否则可能会出现绑定后鼠标无效的情况
+.
+此模式等同于
+BindWindowEx
+中的
+mouse
+为以下组合
+"dx.public.active.api|dx.public.active.message|dx.mouse.position.lock.api|dx.mouse.position.lock.message|dx.mouse.state.api|dx.mouse.state.message|dx.mouse.api|dx.mouse.focus.input.api|dx.mouse.focus.input.message|dx.mouse.clip.lock.api|dx.mouse.input.lock.api|dx.mouse.cursor"
+"dx2"
+：
+dx2
+模式
+,
+这种方式类似于
+dx
+模式
+,
+但是不会锁定外部鼠标输入
+.
+有些窗口在此模式下绑定时，需要先激活窗口再绑定
+(
+或者绑定以后手动激活
+)
+，否则可能会出现绑定后鼠标无效的情况
+.
+此模式等同于
+BindWindowEx
+中的
+mouse
+为以下组合
+"dx.public.active.api|dx.public.active.message|dx.mouse.position.lock.api|dx.mouse.state.api|dx.mouse.api|dx.mouse.focus.input.api|dx.mouse.focus.input.message|dx.mouse.clip.lock.api|dx.mouse.input.lock.api|
+dx.mouse.cursor"
+keypad
+字符串
+:
+键盘仿真模式 取值有以下几种
+"normal" :
+正常模式
+,
+平常我们用的前台键盘模式
+"windows": Windows
+模式
+,
+采取模拟
+windows
+消息方式 同按键的后台插件
+.
+"dx": dx
+模式
+,
+采用模拟
+dx
+后台键盘模式。有些窗口在此模式下绑定时，需要先激活窗口再绑定
+(
+或者绑定以后激活
+)
+，否则可能会出现绑定后键盘无效的情况
+.
+此模式等同于
+BindWindowEx
+中的
+keypad
+为以下组合
+"dx.public.active.api|dx.public.active.message|
+dx.keypad.state.api|dx.keypad.api|dx.keypad.input.lock.api"
+mode
+整形数
+:
+模式。 取值有以下几种
+0 :
+推荐模式此模式比较通用，而且后台效果是最好的
+.
+2 :
+同模式
+0,
+如果模式
+0
+有崩溃问题，可以尝试此模式
+.
+注意
+0
+和
+2
+模式，当主绑定
+(
+第一个绑定同个窗口的对象
+)
+绑定成功后，那么调用主绑定的线程必须一致维持
+,
+否则线程一旦推出
+,
+对应的绑定也会消失
+.
+101 :
+超级绑定模式
+.
+可隐藏目标进程中的
+dm.dll.
+避免被恶意检测
+.
+效果要比
+dx.public.hide.dll
+好
+.
+推荐使用
+.
+103 :
+同模式
+101
+，如果模式
+101
+有崩溃问题，可以尝试此模式
+.
+11 :
+需要加载驱动
+,
+适合一些特殊的窗口
+,
+如果前面的无法绑定，可以尝试此模式
+.
+此模式不支持
+32
+位系统
+13 :
+需要加载驱动
+,
+适合一些特殊的窗口
+,
+如果前面的无法绑定，可以尝试此模式
+.
+此模式不支持
+32
+位系统
+需要注意的是
+:
+模式
+101 103
+在大部分窗口下绑定都没问题。但也有少数特殊的窗口，比如有很多子窗口的窗口，对于这种窗口，在绑定时，一定要把
+鼠标指向一个可以输入文字的窗口，比如一个文本框，最好能激活这个文本框，这样可以保证绑定的成功
+.
+返回值
+:
+整形数
+:
+0:
+失败
+1:
+成功
+如果返回
+0
+，可以调用
+GetLastError
+来查看具体失败错误码
+,
+帮助分析问题
+.
+示例
+:
+// display:
+前台 鼠标
+:
+前台
+键盘
+:
+前台 模式
+0
+dm_ret =
+dm.BindWindow(hwnd,"normal","normal","normal",0)
+// display: dx
+鼠标
+:
+前台 键盘
+:
+前台
+模式
+0
+dm_ret =
+dm.BindWindow(hwnd,"dx","normal","normal",0)
+// display: dx
+鼠标
+:dx
+后台 键盘
+:
+dx
+后台 模式
+1
+dm_ret = dm.BindWindow(hwnd,"dx","dx","dx",1)
+// display: dx
+鼠标
+:windows3
+后台 键盘
+:windows
+后台 模式
+101
+dm_ret = dm.BindWindow(hwnd,"dx","windows3","windows",101)
+注意
+:
+绑定之后
+,
+所有的坐标都相对于窗口的客户区坐标
+(
+不包含窗口边框
+)
+另外
+,
+绑定窗口后
+,
+必须加以下代码
+,
+以保证所有资源正常释放
+这个函数的意思是在脚本结束时
+,
+会调用这个函数。需要注意的是，目前的按键版本对于这个函数的执行不是线程级别的，也就是说，这个函数只会在主线程执行，子线程绑定的大漠对象，不保证完全释放。
+Sub OnScriptExit()
+dm_ret =
+dm.UnBindWindow()
+End Sub
+另外 绑定
+dx
+会比较耗时间
+,
+请不要频繁调用此函数
+.
+还有一点特别要注意的是
+,
+有些窗口绑定之后必须加一定的延时
+,
+否则后台也无效
+.
+一般
+1
+秒到
+2
+秒的延时就足够
+.
+发现绑定失败的几种可能
+(
+一般是需要管理员权限的模式才有可能会失败
+)
+1.
+系统登录的帐号必须有
+Administrators
+权限
+2.
+一些防火墙会防止插件注入窗口所在进程，比如
+360
+防火墙等，必须把
+dm.dll
+设置为信任
+.
+3.
+还有一个比较弱智的可能性，那就是插件没有注册到系统中，这时
+CreateObject
+压根就是失败的
+.
+检测对象是否创建成功很简单，如下代码
+set dm = createobject("dm.dmsoft")
+ver = dm.Ver()
+If len(ver) = 0 Then
+MessageBox "
+创建对象失败
+,
+检查系统是否禁用了
+vbs
+脚本权限
+"
+EndScript
+End If
+4.
+在沙盘中开的窗口进程，绑定一些需要管理员权限的模式，会失败。
+解决方法是要配置沙盘参数，具体如何配置参考沙盘绑定方法
+.
+5.
+窗口所在进程有保护，这个我也无能为力
+.
