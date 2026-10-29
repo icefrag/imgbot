@@ -1,0 +1,14 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>exists</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>exists</h1>
+<p class='sec'>函数简介:</p>
+<p>单帧存在性(same_frame 窗内用冻结帧)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.exists(pic, region=None, threshold=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板名<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度, None=默认</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>if ops.exists("红名.png", region=(0, 0, 200, 100)): ...</pre>
+<hr><a href='../index.html'>← 目录</a>
+</body></html>

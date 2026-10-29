@@ -1,0 +1,113 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>imgbot 接口说明</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>imgbot 接口说明</h1>
+<p>图色脚本基础库: 潜影(自研后台插件) + DmSoft 接口壳 + Ops 门面。坐标=绑定窗口客户区, 通道序 BGR。</p>
+<h2>入门</h2><p>
+<a href='c0/p0-0.html'>安装与构建</a> 
+<a href='c0/p0-1.html'>第一个脚本</a> 
+<a href='c0/p0-2.html'>BindWindow 通道模式</a> 
+</p>
+<h2>绑定与后台设置</h2><p>
+<a href='c1/p1-0.html'>BindWindow</a> 
+<a href='c1/p1-1.html'>UnBindWindow</a> 
+<a href='c1/p1-2.html'>ForceUnBindWindow</a> 
+<a href='c1/p1-3.html'>GetBindWindow</a> 
+<a href='c1/p1-4.html'>IsBind</a> 
+<a href='c1/p1-5.html'>SwitchBindWindow</a> 
+<a href='c1/p1-6.html'>EnableFakeActive</a> 
+<a href='c1/p1-7.html'>GetFps</a> 
+<a href='c1/p1-8.html'>EnableRealMouse</a> 
+<a href='c1/p1-9.html'>EnableRealKeypad</a> 
+<a href='c1/p1-10.html'>EnableMouseSync</a> 
+<a href='c1/p1-11.html'>EnableKeypadSync</a> 
+</p>
+<h2>图色</h2><p>
+<a href='c2/p2-0.html'>FindPic</a> 
+<a href='c2/p2-1.html'>FindPicE</a> 
+<a href='c2/p2-2.html'>FindColor</a> 
+<a href='c2/p2-3.html'>FindColorE</a> 
+<a href='c2/p2-4.html'>FindColorEx</a> 
+<a href='c2/p2-5.html'>FindMultiColor</a> 
+<a href='c2/p2-6.html'>GetColor</a> 
+<a href='c2/p2-7.html'>GetColorBGR</a> 
+<a href='c2/p2-8.html'>CmpColor</a> 
+<a href='c2/p2-9.html'>GetColorNum</a> 
+<a href='c2/p2-10.html'>Capture</a> 
+<a href='c2/p2-11.html'>CapturePng</a> 
+<a href='c2/p2-12.html'>CaptureJpg</a> 
+<a href='c2/p2-13.html'>IsDisplayDead</a> 
+</p>
+<h2>键鼠</h2><p>
+<a href='c3/p3-0.html'>MoveTo</a> 
+<a href='c3/p3-1.html'>MoveR</a> 
+<a href='c3/p3-2.html'>LeftClick</a> 
+<a href='c3/p3-3.html'>LeftDoubleClick</a> 
+<a href='c3/p3-4.html'>LeftDown</a> 
+<a href='c3/p3-5.html'>LeftUp</a> 
+<a href='c3/p3-6.html'>RightClick</a> 
+<a href='c3/p3-7.html'>RightDown</a> 
+<a href='c3/p3-8.html'>RightUp</a> 
+<a href='c3/p3-9.html'>MiddleClick</a> 
+<a href='c3/p3-10.html'>MiddleDown</a> 
+<a href='c3/p3-11.html'>MiddleUp</a> 
+<a href='c3/p3-12.html'>WheelUp</a> 
+<a href='c3/p3-13.html'>WheelDown</a> 
+<a href='c3/p3-14.html'>KeyPress</a> 
+<a href='c3/p3-15.html'>KeyDown</a> 
+<a href='c3/p3-16.html'>KeyUp</a> 
+<a href='c3/p3-17.html'>KeyPressChar</a> 
+<a href='c3/p3-18.html'>KeyDownChar</a> 
+<a href='c3/p3-19.html'>KeyUpChar</a> 
+<a href='c3/p3-20.html'>KeyPressStr</a> 
+<a href='c3/p3-21.html'>SendString</a> 
+<a href='c3/p3-22.html'>SendPaste</a> 
+<a href='c3/p3-23.html'>GetCursorPos</a> 
+</p>
+<h2>窗口</h2><p>
+<a href='c4/p4-0.html'>FindWindow</a> 
+<a href='c4/p4-1.html'>FindWindowEx</a> 
+<a href='c4/p4-2.html'>GetWindowClass</a> 
+<a href='c4/p4-3.html'>GetWindowTitle</a> 
+<a href='c4/p4-4.html'>GetWindowRect</a> 
+<a href='c4/p4-5.html'>GetClientRect</a> 
+<a href='c4/p4-6.html'>GetClientSize</a> 
+<a href='c4/p4-7.html'>ClientToScreen</a> 
+<a href='c4/p4-8.html'>ScreenToClient</a> 
+<a href='c4/p4-9.html'>MoveWindow</a> 
+<a href='c4/p4-10.html'>GetWindowProcessId</a> 
+<a href='c4/p4-11.html'>GetWindowProcessPath</a> 
+<a href='c4/p4-12.html'>GetForegroundWindow</a> 
+</p>
+<h2>Ops门面(图色组合层)</h2><p>
+<a href='c5/p5-0.html'>Ops 总则</a> 
+<a href='c5/p5-1.html'>wait_until</a> 
+<a href='c5/p5-2.html'>same_frame</a> 
+<a href='c5/p5-3.html'>retry</a> 
+<a href='c5/p5-4.html'>shot</a> 
+<a href='c5/p5-5.html'>wait_pic</a> 
+<a href='c5/p5-6.html'>wait_pic_any</a> 
+<a href='c5/p5-7.html'>wait_pic_gone</a> 
+<a href='c5/p5-8.html'>wait_color</a> 
+<a href='c5/p5-9.html'>wait_color_gone</a> 
+<a href='c5/p5-10.html'>wait_text</a> 
+<a href='c5/p5-11.html'>wait_stable</a> 
+<a href='c5/p5-12.html'>wait_change</a> 
+<a href='c5/p5-13.html'>find_tap</a> 
+<a href='c5/p5-14.html'>tap_until_gone</a> 
+<a href='c5/p5-15.html'>swipe_find</a> 
+<a href='c5/p5-16.html'>exists</a> 
+<a href='c5/p5-17.html'>probe</a> 
+<a href='c5/p5-18.html'>find_all</a> 
+<a href='c5/p5-19.html'>check_color</a> 
+<a href='c5/p5-20.html'>check_points</a> 
+<a href='c5/p5-21.html'>read_number</a> 
+<a href='c5/p5-22.html'>read_text</a> 
+</p>
+<h2>基本设置与模板</h2><p>
+<a href='c6/p6-0.html'>SetPath</a> 
+<a href='c6/p6-1.html'>Ver</a> 
+<a href='c6/p6-2.html'>GetLastError</a> 
+<a href='c6/p6-3.html'>模板制作约定</a> 
+<a href='c6/p6-4.html'>常见坑速查</a> 
+<a href='c6/p6-5.html'>未实现方法留位</a> 
+</p>
+</body></html>

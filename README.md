@@ -99,6 +99,38 @@ t.tap(*hit[:2])
 | `read_digits(scene, templates, threshold=0.8) -> str` | `templates={字符: ndarray 或 [ndarray,...]}`; 放大 4x + 逐字匹配 + NMS, 按 x 拼字符串 |
 | `enlarge(scene, factor=4)` | 放大(读数管线内用) |
 
+### `imgbot/ops.py` —— 图色门面(DmSoft 之上的高频组合层, 通道无关)
+
+`Ops(dm)`: 构造吃一个 DmSoft 绑定(normal/gdi/windows/dx 任选)。
+规矩: 等待必有 timeout 且超时安静返回; 等待族拒绝进 same_frame 窗口(防复读旧帧);
+停止信号先于命中检查; wait_pic/wait_pic_any/wait_text 超时自动截图留痕 logs/shots/。
+裸输入不进门面(直接 `dm.MoveTo/dm.LeftClick/KeyPress`)。
+
+| API | 返回 | 说明 |
+|---|---|---|
+| `wait_until(fn, timeout, interval=0.3, stop=None)` | bool | 通用轮询底座(A/B 族地基), 停止优先 |
+| `same_frame()` | 上下文 | 一帧多查窗口: 窗内查询共用冻结帧, 出窗现截 |
+| `retry(fn, times=3, backoff=1.0)` | bool | 动作级重试(退避), 管"做到为止" |
+| `shot(tag="")` | Path | 当前帧存档 logs/shots/(wait 族失败自动调) |
+| `wait_pic(pic, region=None, timeout=30, threshold=None, stop=None)` | `(x,y,score)` \| None | 等图出现 |
+| `wait_pic_any(pics, region=None, timeout=30, ...)` | `(名字,x,y,score)` \| None | 等一组里任一张出现(缺素材跳过) |
+| `wait_pic_gone(pic, region=None, timeout=30, ...)` | bool | 等图消失(加载页结束) |
+| `wait_color(color, region=None, timeout=30, stop=None)` | `(x,y)` \| None | 等色出现("RRGGBB[-DRDGDB]") |
+| `wait_color_gone(color, region=None, timeout=30, ...)` | bool | 等色消失 |
+| `wait_text(text, region=None, timeout=30, min_ratio=0.7, ...)` | `(x,y,相似度)` \| None | OCR 等文字出现 |
+| `wait_stable(region, timeout=30, frames=5, ...)` | bool | 等区域画面静止(加载完成) |
+| `wait_change(region, timeout=30, ...)` | bool | 等区域变化(过场/结算) |
+| `find_tap(pic, region=None, timeout=0, verify=None, stop=None)` | bool | 找到就拟人点; verify=点后等确认图(二次确认) |
+| `tap_until_gone(pic, region=None, timeout=10, ...)` | int(次数) | 连点直到消失(确定/领取) |
+| `swipe_find(pic, direction, region=None, timeout=30, ...)` | `(x,y)` \| None | 列表滚动查找(direction=up/down/left/right) |
+| `exists(pic, region=None, threshold=None)` | bool | 单帧存在性(冻结帧感知) |
+| `probe(*pics, region=None, threshold=None)` | 名字 \| None | 单帧多图探测, 返回命中模板名(多张同屏取分数最高) |
+| `find_all(pic, region=None, threshold=None)` | `[(x,y)]` | 找全部命中(列表项/多目标) |
+| `check_color(x, y, color, tol=0)` | bool | 单点比色 |
+| `check_points(points, region)` | bool | 多点找色校验(动画元素, 全点命中才真) |
+| `read_number(region, digit_templates)` | int \| None | 数字读数(模板逐字, 小字体别硬 OCR) |
+| `read_text(region=None)` | str | OCR 读区域全文 |
+
 ### `imgbot/actions.py` —— 操作层(拟人点击/轮询点击)
 
 | API | 返回 | 说明 |

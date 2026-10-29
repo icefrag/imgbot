@@ -1,0 +1,14 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>find_tap</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>find_tap</h1>
+<p class='sec'>函数简介:</p>
+<p><b>找到就拟人点</b>(最高频原语)。timeout=0 单帧试; verify=点后要等出现的确认图(二次确认, 需新帧故不能在 same_frame 窗口用)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.find_tap(pic, region=None, timeout=0, interval=0.4, threshold=None, verify=None, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板名<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0】</b>: 0=单帧试一次; &gt;0=先等到出现(秒)<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.4】</b>: 轮询间隔秒<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度, None=默认<br>verify <span class='maroon'>字符串</span> <b class='opt'>【可选, 默认 None】</b>: 点后确认模板名<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool(点到且验证过)</span></p>
+<p class='sec'>示例:</p>
+<pre>ops.find_tap("领取.png", region=R, verify="已领取.png")</pre>
+<hr><a href='../index.html'>← 目录</a>
+</body></html>

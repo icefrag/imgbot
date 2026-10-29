@@ -1,0 +1,420 @@
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
+<HTML><HEAD></HEAD><BODY>
+<UL>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="入门">
+	</OBJECT>
+	<UL>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="安装与构建">
+		<param name="Local" value="c0/p0-0.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="第一个脚本">
+		<param name="Local" value="c0/p0-1.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="BindWindow 通道模式">
+		<param name="Local" value="c0/p0-2.html">
+		</OBJECT>
+	</UL>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="绑定与后台设置">
+	</OBJECT>
+	<UL>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="BindWindow">
+		<param name="Local" value="c1/p1-0.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="UnBindWindow">
+		<param name="Local" value="c1/p1-1.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="ForceUnBindWindow">
+		<param name="Local" value="c1/p1-2.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetBindWindow">
+		<param name="Local" value="c1/p1-3.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="IsBind">
+		<param name="Local" value="c1/p1-4.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="SwitchBindWindow">
+		<param name="Local" value="c1/p1-5.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="EnableFakeActive">
+		<param name="Local" value="c1/p1-6.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetFps">
+		<param name="Local" value="c1/p1-7.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="EnableRealMouse">
+		<param name="Local" value="c1/p1-8.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="EnableRealKeypad">
+		<param name="Local" value="c1/p1-9.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="EnableMouseSync">
+		<param name="Local" value="c1/p1-10.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="EnableKeypadSync">
+		<param name="Local" value="c1/p1-11.html">
+		</OBJECT>
+	</UL>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="图色">
+	</OBJECT>
+	<UL>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="FindPic">
+		<param name="Local" value="c2/p2-0.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="FindPicE">
+		<param name="Local" value="c2/p2-1.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="FindColor">
+		<param name="Local" value="c2/p2-2.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="FindColorE">
+		<param name="Local" value="c2/p2-3.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="FindColorEx">
+		<param name="Local" value="c2/p2-4.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="FindMultiColor">
+		<param name="Local" value="c2/p2-5.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetColor">
+		<param name="Local" value="c2/p2-6.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetColorBGR">
+		<param name="Local" value="c2/p2-7.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="CmpColor">
+		<param name="Local" value="c2/p2-8.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetColorNum">
+		<param name="Local" value="c2/p2-9.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="Capture">
+		<param name="Local" value="c2/p2-10.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="CapturePng">
+		<param name="Local" value="c2/p2-11.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="CaptureJpg">
+		<param name="Local" value="c2/p2-12.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="IsDisplayDead">
+		<param name="Local" value="c2/p2-13.html">
+		</OBJECT>
+	</UL>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="键鼠">
+	</OBJECT>
+	<UL>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="MoveTo">
+		<param name="Local" value="c3/p3-0.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="MoveR">
+		<param name="Local" value="c3/p3-1.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="LeftClick">
+		<param name="Local" value="c3/p3-2.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="LeftDoubleClick">
+		<param name="Local" value="c3/p3-3.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="LeftDown">
+		<param name="Local" value="c3/p3-4.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="LeftUp">
+		<param name="Local" value="c3/p3-5.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="RightClick">
+		<param name="Local" value="c3/p3-6.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="RightDown">
+		<param name="Local" value="c3/p3-7.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="RightUp">
+		<param name="Local" value="c3/p3-8.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="MiddleClick">
+		<param name="Local" value="c3/p3-9.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="MiddleDown">
+		<param name="Local" value="c3/p3-10.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="MiddleUp">
+		<param name="Local" value="c3/p3-11.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="WheelUp">
+		<param name="Local" value="c3/p3-12.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="WheelDown">
+		<param name="Local" value="c3/p3-13.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="KeyPress">
+		<param name="Local" value="c3/p3-14.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="KeyDown">
+		<param name="Local" value="c3/p3-15.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="KeyUp">
+		<param name="Local" value="c3/p3-16.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="KeyPressChar">
+		<param name="Local" value="c3/p3-17.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="KeyDownChar">
+		<param name="Local" value="c3/p3-18.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="KeyUpChar">
+		<param name="Local" value="c3/p3-19.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="KeyPressStr">
+		<param name="Local" value="c3/p3-20.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="SendString">
+		<param name="Local" value="c3/p3-21.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="SendPaste">
+		<param name="Local" value="c3/p3-22.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetCursorPos">
+		<param name="Local" value="c3/p3-23.html">
+		</OBJECT>
+	</UL>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="窗口">
+	</OBJECT>
+	<UL>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="FindWindow">
+		<param name="Local" value="c4/p4-0.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="FindWindowEx">
+		<param name="Local" value="c4/p4-1.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetWindowClass">
+		<param name="Local" value="c4/p4-2.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetWindowTitle">
+		<param name="Local" value="c4/p4-3.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetWindowRect">
+		<param name="Local" value="c4/p4-4.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetClientRect">
+		<param name="Local" value="c4/p4-5.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetClientSize">
+		<param name="Local" value="c4/p4-6.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="ClientToScreen">
+		<param name="Local" value="c4/p4-7.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="ScreenToClient">
+		<param name="Local" value="c4/p4-8.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="MoveWindow">
+		<param name="Local" value="c4/p4-9.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetWindowProcessId">
+		<param name="Local" value="c4/p4-10.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetWindowProcessPath">
+		<param name="Local" value="c4/p4-11.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetForegroundWindow">
+		<param name="Local" value="c4/p4-12.html">
+		</OBJECT>
+	</UL>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="Ops门面(图色组合层)">
+	</OBJECT>
+	<UL>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="Ops 总则">
+		<param name="Local" value="c5/p5-0.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_until">
+		<param name="Local" value="c5/p5-1.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="same_frame">
+		<param name="Local" value="c5/p5-2.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="retry">
+		<param name="Local" value="c5/p5-3.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="shot">
+		<param name="Local" value="c5/p5-4.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_pic">
+		<param name="Local" value="c5/p5-5.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_pic_any">
+		<param name="Local" value="c5/p5-6.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_pic_gone">
+		<param name="Local" value="c5/p5-7.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_color">
+		<param name="Local" value="c5/p5-8.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_color_gone">
+		<param name="Local" value="c5/p5-9.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_text">
+		<param name="Local" value="c5/p5-10.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_stable">
+		<param name="Local" value="c5/p5-11.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="wait_change">
+		<param name="Local" value="c5/p5-12.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="find_tap">
+		<param name="Local" value="c5/p5-13.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="tap_until_gone">
+		<param name="Local" value="c5/p5-14.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="swipe_find">
+		<param name="Local" value="c5/p5-15.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="exists">
+		<param name="Local" value="c5/p5-16.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="probe">
+		<param name="Local" value="c5/p5-17.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="find_all">
+		<param name="Local" value="c5/p5-18.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="check_color">
+		<param name="Local" value="c5/p5-19.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="check_points">
+		<param name="Local" value="c5/p5-20.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="read_number">
+		<param name="Local" value="c5/p5-21.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="read_text">
+		<param name="Local" value="c5/p5-22.html">
+		</OBJECT>
+	</UL>
+	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="基本设置与模板">
+	</OBJECT>
+	<UL>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="SetPath">
+		<param name="Local" value="c6/p6-0.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="Ver">
+		<param name="Local" value="c6/p6-1.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="GetLastError">
+		<param name="Local" value="c6/p6-2.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="模板制作约定">
+		<param name="Local" value="c6/p6-3.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="常见坑速查">
+		<param name="Local" value="c6/p6-4.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="未实现方法留位">
+		<param name="Local" value="c6/p6-5.html">
+		</OBJECT>
+	</UL>
+</UL>
+</BODY></HTML>

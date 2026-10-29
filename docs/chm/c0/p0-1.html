@@ -1,0 +1,20 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>第一个脚本</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>第一个脚本</h1>
+
+<pre>from imgbot.dmsoft import DmSoft
+from imgbot.ops import Ops
+
+dm = DmSoft()
+assert dm.BindWindow(hwnd, "dx", "dx", "dx", 0) == 1
+dm.SetPath(r"D:/proj/templates")            # 模板目录(PNG 素材)
+ops = Ops(dm)                               # 门面: 高频组合
+
+ops.find_tap("领取按钮.png", region=(800, 500, 1200, 700), verify="已领取.png")
+hit = ops.wait_pic_any(["升级弹窗.png", "断线弹窗.png"], region=POPUP, timeout=10)
+with ops.same_frame():                      # 一帧多查
+    if ops.exists("boss血条.png", region=TOP) and ops.check_color(10, 10, "00FF00"):
+        dm.KeyPress(0x70)                   # F1 裸键(游戏技能)
+dm.UnBindWindow()
+</pre>
+<hr><a href='../index.html'>← 目录</a>
+</body></html>

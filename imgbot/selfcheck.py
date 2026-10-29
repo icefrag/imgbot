@@ -570,11 +570,11 @@ def _check_readme_api():
     if not readme.exists():          # 装成 wheel 后 README 不在包里, 跳过
         return
     text = readme.read_text(encoding="utf-8")
-    from . import actions, adb, ime, ocr, readout, target, vision
+    from . import actions, adb, ime, ocr, ops, readout, target, vision
     from .win32 import capture
     from .win32 import input as win_input
     from .win32 import window
-    modules = [vision, ocr, readout, actions, adb, ime, target,
+    modules = [vision, ocr, readout, actions, adb, ime, target, ops,
                window, capture, win_input]
     # `模块.名` 形式(可带不带括号): 名必须真实可取(含 win32 子模块的写法)
     # 模块名按 README 里的简称匹配: vision/ocr/readout/actions/adb/ime/target + win32 三件

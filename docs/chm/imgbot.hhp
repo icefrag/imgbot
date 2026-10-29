@@ -1,0 +1,14 @@
+[OPTIONS]
+Compatibility=1.1 or later
+Compiled file=imgbot_doc.chm
+Contents file=imgbot.hhc
+Default topic=index.html
+Default Window=main
+Language=0x804
+Title=imgbot API
+
+[WINDOWS]
+main="imgbot API","imgbot.hhc",,"index.html",,,,,,0x20,200,0x1006,[50,30,1300,820],0,0,1,0,0,0,0
+
+[FILES]
+index.html

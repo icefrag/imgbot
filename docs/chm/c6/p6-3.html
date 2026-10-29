@@ -1,0 +1,19 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>模板制作约定</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>模板制作约定</h1>
+
+<ul>
+<li>一律 <b>PNG</b>(无损+透明通道), 文件名即模板名;</li>
+<li><b>四角即底色自动键控</b>: 3 通道 PNG 四角(≥3/4)同色 → 载入自动转透明模板,</li>
+</ul>
+<p>  匹配只比笔画 —— 悬浮元素裁图后背景填统一纯色即可, 不用手工抠图;</p>
+<ul>
+<li>元素自带闪光/呼吸灯 → 只裁稳定核心(文字笔画/图标主体);</li>
+<li><b>位置固定的 UI(弹窗角上的 X 等)必须在固定矩形内搜索</b>(region),</li>
+</ul>
+<p>  否则画面其他亮色图案会误报(实测关 X 全屏搜在翅膀上得 0.94);</p>
+<ul>
+<li>多点找色素材用 pixpick 选点(tools/pixpick)。</li>
+</ul>
+
+<hr><a href='../index.html'>← 目录</a>
+</body></html>

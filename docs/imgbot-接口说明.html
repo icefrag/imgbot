@@ -1,0 +1,1151 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>imgbot 接口说明</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>imgbot 接口说明</h1><div class='nav'>
+<a href='#入门'>入门</a>
+<a href='#绑定与后台设置'>绑定与后台设置</a>
+<a href='#图色'>图色</a>
+<a href='#键鼠'>键鼠</a>
+<a href='#窗口'>窗口</a>
+<a href='#Ops门面(图色组合层)'>Ops门面(图色组合层)</a>
+<a href='#基本设置与模板'>基本设置与模板</a>
+</div>
+<h2 id='入门'>入门</h2>
+<a id='%E5%85%A5%E9%97%A8/%E5%AE%89%E8%A3%85%E4%B8%8E%E6%9E%84%E5%BB%BA.html'></a>
+<h3>安装与构建</h3>
+
+<p><b>Python 侧</b>(消费项目):</p>
+<pre>
+uv add imgbot            # 基础(图色/键鼠/窗口)
+uv add "imgbot[ocr]"     # 加 OCR
+</pre>
+
+<p><b>潜影注入件</b>(仅 dx 通道需要, 其余模式零依赖):</p>
+<pre>
+uv run imgbot/dx/native/build.py        # 需 zig(默认 D:/tools/zig/zig.exe)
+</pre>
+<p>产物 <code>imgbot/dx/bin/</code>: dmcore32/64.dll + injector32/64.exe。</p>
+<p>Defender 需加一次排除(管理员):</p>
+<p><code>Add-MpPreference -ExclusionPath &lt;repo&gt;\imgbot\dx\bin</code></p>
+
+<a id='%E5%85%A5%E9%97%A8/%E7%AC%AC%E4%B8%80%E4%B8%AA%E8%84%9A%E6%9C%AC.html'></a>
+<h3>第一个脚本</h3>
+
+<pre>from imgbot.dmsoft import DmSoft
+from imgbot.ops import Ops
+
+dm = DmSoft()
+assert dm.BindWindow(hwnd, "dx", "dx", "dx", 0) == 1
+dm.SetPath(r"D:/proj/templates")            # 模板目录(PNG 素材)
+ops = Ops(dm)                               # 门面: 高频组合
+
+ops.find_tap("领取按钮.png", region=(800, 500, 1200, 700), verify="已领取.png")
+hit = ops.wait_pic_any(["升级弹窗.png", "断线弹窗.png"], region=POPUP, timeout=10)
+with ops.same_frame():                      # 一帧多查
+    if ops.exists("boss血条.png", region=TOP) and ops.check_color(10, 10, "00FF00"):
+        dm.KeyPress(0x70)                   # F1 裸键(游戏技能)
+dm.UnBindWindow()
+</pre>
+<a id='%E5%85%A5%E9%97%A8/BindWindow_%E9%80%9A%E9%81%93%E6%A8%A1%E5%BC%8F.html'></a>
+<h3>BindWindow 通道模式</h3>
+
+<table>
+<tr><th>通道</th><th>display(图色)</th><th>mouse/keypad(键鼠)</th><th>注入</th><th>适用</th></tr>
+<tr><td>normal</td><td>BitBlt 截屏裁客户区</td><td>SendInput 真事件(动真光标)</td><td>零</td><td>单开/强反作弊; IME 免疫打字</td></tr>
+<tr><td>gdi/windows</td><td>PrintWindow 只读</td><td>PostMessage 消息</td><td>零</td><td>后台窗口, 消息型目标</td></tr>
+<tr><td>dx(潜影)</td><td>GL/d3d9 钩子取帧</td><td>进程内消息配方+键态钩子</td><td>注入</td><td>游戏 6 开后台, 最高档</td></tr>
+</table>
+
+<p>坐标全模式统一<b>绑定窗口客户区坐标</b>; 通道序 BGR。</p>
+
+<h2 id='绑定与后台设置'>绑定与后台设置</h2>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/BindWindow.html'></a>
+<h3>BindWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>绑定窗口并选通道, 返回 1 成功/0 失败。重复绑定前先 UnBindWindow。</p>
+<p class='sec'>函数原型:</p>
+<pre>BindWindow(hwnd, display, mouse, keypad, mode=0)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 目标窗口句柄(FindWindow 获取)<br>display <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 图色通道: normal / gdi / gdi2 / dx 开头的串<br>mouse <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 鼠标通道: normal / windows / dx 开头的串<br>keypad <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 键盘通道: 同 mouse<br>mode <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 0】</b>: 保留(大漠兼容位)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1 成功 / 0 失败(异常带原因)</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.BindWindow(hwnd, "dx", "dx", "dx", 0)</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/UnBindWindow.html'></a>
+<h3>UnBindWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>解绑释放资源(dx 通道收回注入钩子)。脚本退出前调用。</p>
+<p class='sec'>函数原型:</p>
+<pre>UnBindWindow()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.UnBindWindow()</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/ForceUnBindWindow.html'></a>
+<h3>ForceUnBindWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>强制解绑指定窗口(本对象绑定的)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ForceUnBindWindow(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 窗口句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1/0</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.ForceUnBindWindow(hwnd)</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/GetBindWindow.html'></a>
+<h3>GetBindWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>当前绑定窗口句柄, 未绑定 0。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetBindWindow()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数</span></p>
+<p class='sec'>示例:</p>
+<pre>hwnd = dm.GetBindWindow()</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/IsBind.html'></a>
+<h3>IsBind</h3>
+<p class='sec'>函数简介:</p>
+<p>查询是否绑定了某窗口。</p>
+<p class='sec'>函数原型:</p>
+<pre>IsBind(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 窗口句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1/0</span></p>
+<p class='sec'>示例:</p>
+<pre>if dm.IsBind(hwnd): ...</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/SwitchBindWindow.html'></a>
+<h3>SwitchBindWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>不解绑切换<b>同进程</b>另一窗口。</p>
+<p class='sec'>函数原型:</p>
+<pre>SwitchBindWindow(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 新窗口句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1/0</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.SwitchBindWindow(other_hwnd)</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/EnableFakeActive.html'></a>
+<h3>EnableFakeActive</h3>
+<p class='sec'>函数简介:</p>
+<p>后台假激活(潜影): 子类化目标吞失焦族消息, 后台窗口自认为有焦点。</p>
+<p class='sec'>函数原型:</p>
+<pre>EnableFakeActive(enable)</pre>
+<p class='sec'>参数定义:</p>
+<p>enable <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 1 开 / 0 关</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.EnableFakeActive(1)</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/GetFps.html'></a>
+<h3>GetFps</h3>
+<p class='sec'>函数简介:</p>
+<p>绑定窗口帧率(潜影图色: 一秒帧序号增量)。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetFps()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数</span></p>
+<p class='sec'>示例:</p>
+<pre>print(dm.GetFps())</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/EnableRealMouse.html'></a>
+<h3>EnableRealMouse</h3>
+<p class='sec'>函数简介:</p>
+<p>鼠标拟人开关 —— 拟人在本库默认常开(贝塞尔轨迹+ease-out), 此开关为兼容而设, 恒返回 1。</p>
+<p class='sec'>函数原型:</p>
+<pre>EnableRealMouse(enable, mousedelay, mousestep)</pre>
+<p class='sec'>参数定义:</p>
+<p>enable <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 1/0<br>mousedelay <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 兼容位(忽略)<br>mousestep <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 兼容位(忽略)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.EnableRealMouse(1, 10, 10)</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/EnableRealKeypad.html'></a>
+<h3>EnableRealKeypad</h3>
+<p class='sec'>函数简介:</p>
+<p>键盘拟人开关 —— 同上, 恒返回 1。</p>
+<p class='sec'>函数原型:</p>
+<pre>EnableRealKeypad(enable)</pre>
+<p class='sec'>参数定义:</p>
+<p>enable <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 1/0</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.EnableRealKeypad(1)</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/EnableMouseSync.html'></a>
+<h3>EnableMouseSync</h3>
+<p class='sec'>函数简介:</p>
+<p>鼠标消息同步开关 —— 潜影通道本就同步送达(SendMessageTimeout), 恒返回 1。</p>
+<p class='sec'>函数原型:</p>
+<pre>EnableMouseSync(enable, time_out)</pre>
+<p class='sec'>参数定义:</p>
+<p>enable <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 1/0<br>time_out <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 毫秒(兼容位)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.EnableMouseSync(1, 2000)</pre>
+<a id='%E7%BB%91%E5%AE%9A%E4%B8%8E%E5%90%8E%E5%8F%B0%E8%AE%BE%E7%BD%AE/EnableKeypadSync.html'></a>
+<h3>EnableKeypadSync</h3>
+<p class='sec'>函数简介:</p>
+<p>键盘消息同步开关 —— 同上, 恒返回 1。</p>
+<p class='sec'>函数原型:</p>
+<pre>EnableKeypadSync(enable, time_out)</pre>
+<p class='sec'>参数定义:</p>
+<p>enable <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 1/0<br>time_out <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 毫秒(兼容位)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.EnableKeypadSync(1, 2000)</pre>
+<h2 id='图色'>图色</h2>
+<a id='%E5%9B%BE%E8%89%B2/FindPic.html'></a>
+<h3>FindPic</h3>
+<p class='sec'>函数简介:</p>
+<p>模板匹配找图。pic_name 支持多模板(竖线分隔, 按序取首个命中)。</p>
+<p class='sec'>函数原型:</p>
+<pre>FindPic(x1, y1, x2, y2, pic_name, delta_color, sim=0.9, dir=0)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域(客户区坐标, 尽量小别全屏)<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域(客户区坐标, 尽量小别全屏)<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域(客户区坐标, 尽量小别全屏)<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域(客户区坐标, 尽量小别全屏)<br>pic_name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板文件名(带 .png), 相对 SetPath 目录; 多模板写 a.png|b.png<br>delta_color <span class='maroon'>字符串</span> <b class='opt'>【可选, 默认 000000】</b>: 色偏容差 RRGGBB-DRDGDB(保留位)<br>sim <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.9】</b>: 相似度阈值 0~1, 默认 0.9; 禁止降阈值硬凑<br>dir <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 0】</b>: 搜索方向(保留, 现只支持 0)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (模板序号, x, y); 未找到 (-1, -1, -1)</span></p>
+<p class='sec'>示例:</p>
+<pre>idx, x, y = dm.FindPic(0, 0, 800, 600, "按钮.png", "000000", 0.9)</pre>
+<a id='%E5%9B%BE%E8%89%B2/FindPicE.html'></a>
+<h3>FindPicE</h3>
+<p class='sec'>函数简介:</p>
+<p>同 FindPic, 返回字符串 idx|x|y。</p>
+<p class='sec'>函数原型:</p>
+<pre>FindPicE(x1, y1, x2, y2, pic_name, delta_color, sim, dir)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>pic_name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板名(可多模板)<br>delta_color <span class='maroon'>字符串</span> <b class='opt'>【可选, 默认 000000】</b>: 色偏容差(保留位)<br>sim <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.9】</b>: 相似度阈值<br>dir <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 0】</b>: 搜索方向(保留)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>ret = dm.FindPicE(0, 0, 800, 600, "按钮.png", "000000", 0.9)</pre>
+<a id='%E5%9B%BE%E8%89%B2/FindColor.html'></a>
+<h3>FindColor</h3>
+<p class='sec'>函数简介:</p>
+<p>区域找色。</p>
+<p class='sec'>函数原型:</p>
+<pre>FindColor(x1, y1, x2, y2, color, sim=1.0, dir=0)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: RRGGBB 或 RRGGBB-DRDGDB<br>sim <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 1.0】</b>: 相似度(经容差换算)<br>dir <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 0】</b>: 方向(0 首个/其他取末个)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (x, y); 未找到 (-1, -1)</span></p>
+<p class='sec'>示例:</p>
+<pre>x, y = dm.FindColor(0, 0, 500, 500, "FF0000-000010", 1.0)</pre>
+<a id='%E5%9B%BE%E8%89%B2/FindColorE.html'></a>
+<h3>FindColorE</h3>
+<p class='sec'>函数简介:</p>
+<p>同 FindColor, 返回 x|y 字符串。</p>
+<p class='sec'>函数原型:</p>
+<pre>FindColorE(x1, y1, x2, y2, color, sim, dir)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 颜色串<br>sim <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 1.0】</b>: 相似度<br>dir <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 0】</b>: 方向</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>ret = dm.FindColorE(0, 0, 500, 500, "FF0000", 1.0)</pre>
+<a id='%E5%9B%BE%E8%89%B2/FindColorEx.html'></a>
+<h3>FindColorEx</h3>
+<p class='sec'>函数简介:</p>
+<p>同 FindColor, 返回所有命中 x,y|x,y 字符串。</p>
+<p class='sec'>函数原型:</p>
+<pre>FindColorEx(x1, y1, x2, y2, color, sim, dir)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索区域<br>color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 颜色串<br>sim <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 1.0】</b>: 相似度<br>dir <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 0】</b>: 方向</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>ret = dm.FindColorEx(0, 0, 500, 500, "FF0000", 1.0)</pre>
+<a id='%E5%9B%BE%E8%89%B2/FindMultiColor.html'></a>
+<h3>FindMultiColor</h3>
+<p class='sec'>函数简介:</p>
+<p>多点找色(动画元素首选)。锚点+点阵全命中才返回。</p>
+<p class='sec'>函数原型:</p>
+<pre>FindMultiColor(x1, y1, x2, y2, first_color, offset_color, sim, dir)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索矩形(尽量小)<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索矩形(尽量小)<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索矩形(尽量小)<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 搜索矩形(尽量小)<br>first_color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 锚点色 RRGGBB<br>offset_color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 点阵 x|y|RRGGBB,x|y|RRGGBB,...(pixpick 选点)<br>sim <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 1.0】</b>: 相似度<br>dir <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 0】</b>: 方向(保留)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (x, y); 未找到 (-1, -1)</span></p>
+<p class='sec'>示例:</p>
+<pre>x, y = dm.FindMultiColor(0, 0, 800, 600, "FF0000", "10|0|FF0000,0|10|00FF00", 1.0, 0)</pre>
+<a id='%E5%9B%BE%E8%89%B2/GetColor.html'></a>
+<h3>GetColor</h3>
+<p class='sec'>函数简介:</p>
+<p>取某点颜色, 返回 RRGGBB(大漠同序)。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetColor(x, y)</pre>
+<p class='sec'>参数定义:</p>
+<p>x <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标<br>y <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>col = dm.GetColor(100, 100)   # "1A2B3C"</pre>
+<a id='%E5%9B%BE%E8%89%B2/GetColorBGR.html'></a>
+<h3>GetColorBGR</h3>
+<p class='sec'>函数简介:</p>
+<p>取色返回 BBGGRR。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetColorBGR(x, y)</pre>
+<p class='sec'>参数定义:</p>
+<p>x <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标<br>y <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>col = dm.GetColorBGR(100, 100)</pre>
+<a id='%E5%9B%BE%E8%89%B2/CmpColor.html'></a>
+<h3>CmpColor</h3>
+<p class='sec'>函数简介:</p>
+<p>比较坐标颜色。</p>
+<p class='sec'>函数原型:</p>
+<pre>CmpColor(x, y, color, sim=1.0)</pre>
+<p class='sec'>参数定义:</p>
+<p>x <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标<br>y <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标<br>color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: RRGGBB-DRDGDB<br>sim <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 1.0】</b>: 相似度</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1/0</span></p>
+<p class='sec'>示例:</p>
+<pre>if dm.CmpColor(100, 100, "FF0000-000010", 1.0): ...</pre>
+<a id='%E5%9B%BE%E8%89%B2/GetColorNum.html'></a>
+<h3>GetColorNum</h3>
+<p class='sec'>函数简介:</p>
+<p>区域内颜色数量统计。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetColorNum(x1, y1, x2, y2, color, sim=1.0)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 统计区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 统计区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 统计区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 统计区域<br>color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 颜色串<br>sim <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 1.0】</b>: 相似度</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数</span></p>
+<p class='sec'>示例:</p>
+<pre>n = dm.GetColorNum(0, 0, 100, 100, "FFFFFF", 1.0)</pre>
+<a id='%E5%9B%BE%E8%89%B2/Capture.html'></a>
+<h3>Capture</h3>
+<p class='sec'>函数简介:</p>
+<p>区域截图存文件(BMP)。</p>
+<p class='sec'>函数原型:</p>
+<pre>Capture(x1, y1, x2, y2, file)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>file <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 文件路径(按扩展名定格式)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.Capture(0, 0, 800, 600, "screen.bmp")</pre>
+<a id='%E5%9B%BE%E8%89%B2/CapturePng.html'></a>
+<h3>CapturePng</h3>
+<p class='sec'>函数简介:</p>
+<p>同 Capture, PNG 格式。</p>
+<p class='sec'>函数原型:</p>
+<pre>CapturePng(x1, y1, x2, y2, file)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>file <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 文件路径</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.CapturePng(0, 0, 800, 600, "screen.png")</pre>
+<a id='%E5%9B%BE%E8%89%B2/CaptureJpg.html'></a>
+<h3>CaptureJpg</h3>
+<p class='sec'>函数简介:</p>
+<p>同 Capture, JPG 格式。</p>
+<p class='sec'>函数原型:</p>
+<pre>CaptureJpg(x1, y1, x2, y2, file, quality=90)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 截取区域<br>file <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 文件路径<br>quality <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 90】</b>: 压缩质量 1-100</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.CaptureJpg(0, 0, 800, 600, "screen.jpg", 85)</pre>
+<a id='%E5%9B%BE%E8%89%B2/IsDisplayDead.html'></a>
+<h3>IsDisplayDead</h3>
+<p class='sec'>函数简介:</p>
+<p>区域 t 秒画面不变返回 1(卡屏检测)。</p>
+<p class='sec'>函数原型:</p>
+<pre>IsDisplayDead(x1, y1, x2, y2, t=2)</pre>
+<p class='sec'>参数定义:</p>
+<p>x1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 监测区域<br>y1 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 监测区域<br>x2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 监测区域<br>y2 <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 监测区域<br>t <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 2】</b>: 判定秒数</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1/0</span></p>
+<p class='sec'>示例:</p>
+<pre>if dm.IsDisplayDead(0, 0, 800, 600, 3): ...  # 卡了3秒</pre>
+<h2 id='键鼠'>键鼠</h2>
+<a id='%E9%94%AE%E9%BC%A0/MoveTo.html'></a>
+<h3>MoveTo</h3>
+<p class='sec'>函数简介:</p>
+<p>移动虚拟光标到客户区坐标(拟人贝塞尔轨迹); 越出客户区拒绝返回 0。</p>
+<p class='sec'>函数原型:</p>
+<pre>MoveTo(x, y)</pre>
+<p class='sec'>参数定义:</p>
+<p>x <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标<br>y <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1/0</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.MoveTo(500, 300)</pre>
+<a id='%E9%94%AE%E9%BC%A0/MoveR.html'></a>
+<h3>MoveR</h3>
+<p class='sec'>函数简介:</p>
+<p>相对当前虚拟光标移动。</p>
+<p class='sec'>函数原型:</p>
+<pre>MoveR(rx, ry)</pre>
+<p class='sec'>参数定义:</p>
+<p>rx <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 偏移量<br>ry <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 偏移量</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.MoveR(10, -5)</pre>
+<a id='%E9%94%AE%E9%BC%A0/LeftClick.html'></a>
+<h3>LeftClick</h3>
+<p class='sec'>函数简介:</p>
+<p>在当前虚拟光标位单击(先 MoveTo 定位)。</p>
+<p class='sec'>函数原型:</p>
+<pre>LeftClick()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.MoveTo(500, 300); dm.LeftClick()</pre>
+<a id='%E9%94%AE%E9%BC%A0/LeftDoubleClick.html'></a>
+<h3>LeftDoubleClick</h3>
+<p class='sec'>函数简介:</p>
+<p>双击(第二击带双击语义)。</p>
+<p class='sec'>函数原型:</p>
+<pre>LeftDoubleClick()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.MoveTo(500, 300); dm.LeftDoubleClick()</pre>
+<a id='%E9%94%AE%E9%BC%A0/LeftDown.html'></a>
+<h3>LeftDown</h3>
+<p class='sec'>函数简介:</p>
+<p>左键按下(拖拽起始)。</p>
+<p class='sec'>函数原型:</p>
+<pre>LeftDown()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.LeftDown()</pre>
+<a id='%E9%94%AE%E9%BC%A0/LeftUp.html'></a>
+<h3>LeftUp</h3>
+<p class='sec'>函数简介:</p>
+<p>左键抬起(拖拽结束)。</p>
+<p class='sec'>函数原型:</p>
+<pre>LeftUp()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.LeftUp()</pre>
+<a id='%E9%94%AE%E9%BC%A0/RightClick.html'></a>
+<h3>RightClick</h3>
+<p class='sec'>函数简介:</p>
+<p>在当前虚拟光标位右键单击。</p>
+<p class='sec'>函数原型:</p>
+<pre>RightClick()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.RightClick()</pre>
+<a id='%E9%94%AE%E9%BC%A0/RightDown.html'></a>
+<h3>RightDown</h3>
+<p class='sec'>函数简介:</p>
+<p>右键按下。</p>
+<p class='sec'>函数原型:</p>
+<pre>RightDown()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.RightDown()</pre>
+<a id='%E9%94%AE%E9%BC%A0/RightUp.html'></a>
+<h3>RightUp</h3>
+<p class='sec'>函数简介:</p>
+<p>右键抬起。</p>
+<p class='sec'>函数原型:</p>
+<pre>RightUp()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.RightUp()</pre>
+<a id='%E9%94%AE%E9%BC%A0/MiddleClick.html'></a>
+<h3>MiddleClick</h3>
+<p class='sec'>函数简介:</p>
+<p>在当前虚拟光标位中键单击。</p>
+<p class='sec'>函数原型:</p>
+<pre>MiddleClick()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.MiddleClick()</pre>
+<a id='%E9%94%AE%E9%BC%A0/MiddleDown.html'></a>
+<h3>MiddleDown</h3>
+<p class='sec'>函数简介:</p>
+<p>中键按下。</p>
+<p class='sec'>函数原型:</p>
+<pre>MiddleDown()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.MiddleDown()</pre>
+<a id='%E9%94%AE%E9%BC%A0/MiddleUp.html'></a>
+<h3>MiddleUp</h3>
+<p class='sec'>函数简介:</p>
+<p>中键抬起。</p>
+<p class='sec'>函数原型:</p>
+<pre>MiddleUp()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.MiddleUp()</pre>
+<a id='%E9%94%AE%E9%BC%A0/WheelUp.html'></a>
+<h3>WheelUp</h3>
+<p class='sec'>函数简介:</p>
+<p>滚轮上滚一格(+120)。</p>
+<p class='sec'>函数原型:</p>
+<pre>WheelUp()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.WheelUp()</pre>
+<a id='%E9%94%AE%E9%BC%A0/WheelDown.html'></a>
+<h3>WheelDown</h3>
+<p class='sec'>函数简介:</p>
+<p>滚轮下滚一格(-120)。</p>
+<p class='sec'>函数原型:</p>
+<pre>WheelDown()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.WheelDown()</pre>
+<a id='%E9%94%AE%E9%BC%A0/KeyPress.html'></a>
+<h3>KeyPress</h3>
+<p class='sec'>函数简介:</p>
+<p>按一次键(按下+抬起, 扫描码配方+手动 TranslateMessage)。前台通道打字走 UNICODE(IME 免疫); L/R 修饰键自动归一化为通用码。</p>
+<p class='sec'>函数原型:</p>
+<pre>KeyPress(vk)</pre>
+<p class='sec'>参数定义:</p>
+<p>vk <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 虚拟键码(0x41=A, 0x70=F1)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.KeyPress(0x1B)  # ESC</pre>
+<a id='%E9%94%AE%E9%BC%A0/KeyDown.html'></a>
+<h3>KeyDown</h3>
+<p class='sec'>函数简介:</p>
+<p>键按下(长按/组合起始)。</p>
+<p class='sec'>函数原型:</p>
+<pre>KeyDown(vk)</pre>
+<p class='sec'>参数定义:</p>
+<p>vk <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: VK 码</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.KeyDown(0x11)  # Ctrl 按住</pre>
+<a id='%E9%94%AE%E9%BC%A0/KeyUp.html'></a>
+<h3>KeyUp</h3>
+<p class='sec'>函数简介:</p>
+<p>键抬起。</p>
+<p class='sec'>函数原型:</p>
+<pre>KeyUp(vk)</pre>
+<p class='sec'>参数定义:</p>
+<p>vk <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: VK 码</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.KeyUp(0x11)  # Ctrl 松开</pre>
+<a id='%E9%94%AE%E9%BC%A0/KeyPressChar.html'></a>
+<h3>KeyPressChar</h3>
+<p class='sec'>函数简介:</p>
+<p>按字符键(单字符, US 布局)。</p>
+<p class='sec'>函数原型:</p>
+<pre>KeyPressChar(key_str)</pre>
+<p class='sec'>参数定义:</p>
+<p>key_str <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 单字符, 如 a</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.KeyPressChar("a")</pre>
+<a id='%E9%94%AE%E9%BC%A0/KeyDownChar.html'></a>
+<h3>KeyDownChar</h3>
+<p class='sec'>函数简介:</p>
+<p>字符键按下。</p>
+<p class='sec'>函数原型:</p>
+<pre>KeyDownChar(key_str)</pre>
+<p class='sec'>参数定义:</p>
+<p>key_str <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 单字符</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.KeyDownChar("a")</pre>
+<a id='%E9%94%AE%E9%BC%A0/KeyUpChar.html'></a>
+<h3>KeyUpChar</h3>
+<p class='sec'>函数简介:</p>
+<p>字符键抬起。</p>
+<p class='sec'>函数原型:</p>
+<pre>KeyUpChar(key_str)</pre>
+<p class='sec'>参数定义:</p>
+<p>key_str <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 单字符</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.KeyUpChar("a")</pre>
+<a id='%E9%94%AE%E9%BC%A0/KeyPressStr.html'></a>
+<h3>KeyPressStr</h3>
+<p class='sec'>函数简介:</p>
+<p>逐字符按键串。</p>
+<p class='sec'>函数原型:</p>
+<pre>KeyPressStr(key_str, delay=50)</pre>
+<p class='sec'>参数定义:</p>
+<p>key_str <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 字符串<br>delay <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 50】</b>: 每字符间隔毫秒</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.KeyPressStr("abc", 50)</pre>
+<a id='%E9%94%AE%E9%BC%A0/SendString.html'></a>
+<h3>SendString</h3>
+<p class='sec'>函数简介:</p>
+<p>向窗口打字(中文/代理对自动拆)。潜影=WM_CHAR 注入; 前台=UNICODE 注入。</p>
+<p class='sec'>函数原型:</p>
+<pre>SendString(hwnd, str)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 窗口句柄<br>str_ <span class='maroon'></span> <b class='req'>【必传】</b>: </p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.SendString(edit_hwnd, "你好")</pre>
+<a id='%E9%94%AE%E9%BC%A0/SendPaste.html'></a>
+<h3>SendPaste</h3>
+<p class='sec'>函数简介:</p>
+<p>剪贴板粘贴注入(输入框支持时中文一次到位)。</p>
+<p class='sec'>函数原型:</p>
+<pre>SendPaste(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 窗口句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.SendPaste(edit_hwnd)</pre>
+<a id='%E9%94%AE%E9%BC%A0/GetCursorPos.html'></a>
+<h3>GetCursorPos</h3>
+<p class='sec'>函数简介:</p>
+<p><b>虚拟</b>光标位置(客户区坐标) —— 后台自动化时真人动鼠标不影响读数。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetCursorPos()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (x, y)</span></p>
+<p class='sec'>示例:</p>
+<pre>x, y = dm.GetCursorPos()</pre>
+<h2 id='窗口'>窗口</h2>
+<a id='%E7%AA%97%E5%8F%A3/FindWindow.html'></a>
+<h3>FindWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>按类名(可含标题)找窗口。</p>
+<p class='sec'>函数原型:</p>
+<pre>FindWindow(class_name, title='')</pre>
+<p class='sec'>参数定义:</p>
+<p>class_name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 窗口类名, 如 Notepad<br>title <span class='maroon'>字符串</span> <b class='opt'>【可选, 默认 】</b>: 标题包含词, 空=不限</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 句柄/0</span></p>
+<p class='sec'>示例:</p>
+<pre>hwnd = dm.FindWindow("Notepad")</pre>
+<a id='%E7%AA%97%E5%8F%A3/FindWindowEx.html'></a>
+<h3>FindWindowEx</h3>
+<p class='sec'>函数简介:</p>
+<p>在父窗口下找子窗口。</p>
+<p class='sec'>函数原型:</p>
+<pre>FindWindowEx(parent, class_name, title='')</pre>
+<p class='sec'>参数定义:</p>
+<p>parent <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 父句柄, 0=桌面<br>class_name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 子窗口类名<br>title <span class='maroon'>字符串</span> <b class='opt'>【可选, 默认 】</b>: 标题包含词</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 句柄/0</span></p>
+<p class='sec'>示例:</p>
+<pre>edit = dm.FindWindowEx(hwnd, "Edit")</pre>
+<a id='%E7%AA%97%E5%8F%A3/GetWindowClass.html'></a>
+<h3>GetWindowClass</h3>
+<p class='sec'>函数简介:</p>
+<p>取窗口类名。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetWindowClass(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>cls = dm.GetWindowClass(hwnd)</pre>
+<a id='%E7%AA%97%E5%8F%A3/GetWindowTitle.html'></a>
+<h3>GetWindowTitle</h3>
+<p class='sec'>函数简介:</p>
+<p>取窗口标题。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetWindowTitle(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>t = dm.GetWindowTitle(hwnd)</pre>
+<a id='%E7%AA%97%E5%8F%A3/GetWindowRect.html'></a>
+<h3>GetWindowRect</h3>
+<p class='sec'>函数简介:</p>
+<p>完整窗口矩形。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetWindowRect(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (x1, y1, x2, y2)</span></p>
+<p class='sec'>示例:</p>
+<pre>x1, y1, x2, y2 = dm.GetWindowRect(hwnd)</pre>
+<a id='%E7%AA%97%E5%8F%A3/GetClientRect.html'></a>
+<h3>GetClientRect</h3>
+<p class='sec'>函数简介:</p>
+<p>客户区矩形。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetClientRect(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (x1, y1, x2, y2)</span></p>
+<p class='sec'>示例:</p>
+<pre>x1, y1, x2, y2 = dm.GetClientRect(hwnd)</pre>
+<a id='%E7%AA%97%E5%8F%A3/GetClientSize.html'></a>
+<h3>GetClientSize</h3>
+<p class='sec'>函数简介:</p>
+<p>客户区宽高。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetClientSize(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (w, h)</span></p>
+<p class='sec'>示例:</p>
+<pre>w, h = dm.GetClientSize(hwnd)</pre>
+<a id='%E7%AA%97%E5%8F%A3/ClientToScreen.html'></a>
+<h3>ClientToScreen</h3>
+<p class='sec'>函数简介:</p>
+<p>客户区坐标 → 屏幕坐标。</p>
+<p class='sec'>函数原型:</p>
+<pre>ClientToScreen(hwnd, x, y)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄<br>x <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标<br>y <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (x, y)</span></p>
+<p class='sec'>示例:</p>
+<pre>sx, sy = dm.ClientToScreen(hwnd, 100, 100)</pre>
+<a id='%E7%AA%97%E5%8F%A3/ScreenToClient.html'></a>
+<h3>ScreenToClient</h3>
+<p class='sec'>函数简介:</p>
+<p>屏幕坐标 → 客户区坐标。</p>
+<p class='sec'>函数原型:</p>
+<pre>ScreenToClient(hwnd, x, y)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄<br>x <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 屏幕坐标<br>y <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 屏幕坐标</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>元组: (x, y)</span></p>
+<p class='sec'>示例:</p>
+<pre>cx, cy = dm.ScreenToClient(hwnd, 500, 400)</pre>
+<a id='%E7%AA%97%E5%8F%A3/MoveWindow.html'></a>
+<h3>MoveWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>移动窗口(细缝停靠用)。</p>
+<p class='sec'>函数原型:</p>
+<pre>MoveWindow(hwnd, x, y)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄<br>x <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 屏幕坐标<br>y <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 屏幕坐标</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.MoveWindow(hwnd, 0, 0)</pre>
+<a id='%E7%AA%97%E5%8F%A3/GetWindowProcessId.html'></a>
+<h3>GetWindowProcessId</h3>
+<p class='sec'>函数简介:</p>
+<p>窗口归属进程 PID。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetWindowProcessId(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数</span></p>
+<p class='sec'>示例:</p>
+<pre>pid = dm.GetWindowProcessId(hwnd)</pre>
+<a id='%E7%AA%97%E5%8F%A3/GetWindowProcessPath.html'></a>
+<h3>GetWindowProcessPath</h3>
+<p class='sec'>函数简介:</p>
+<p>窗口进程可执行完整路径。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetWindowProcessPath(hwnd)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>path = dm.GetWindowProcessPath(hwnd)</pre>
+<a id='%E7%AA%97%E5%8F%A3/GetForegroundWindow.html'></a>
+<h3>GetForegroundWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>当前前台窗口。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetForegroundWindow()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数</span></p>
+<p class='sec'>示例:</p>
+<pre>fg = dm.GetForegroundWindow()</pre>
+<h2 id='Ops门面(图色组合层)'>Ops门面(图色组合层)</h2>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/Ops_%E6%80%BB%E5%88%99.html'></a>
+<h3>Ops 总则</h3>
+
+<p><code>ops = Ops(dm)</code> —— 构造吃一个 DmSoft 绑定, 通道无关。</p>
+
+<p><b>机制即规矩</b>(违反直接抛错):</p>
+<ul>
+<li>等待必有 timeout, 超时安静返回 None/False, 失败语义调用方交代;</li>
+<li>等待族拒绝进 same_frame 窗口(防「等 5 秒变复读同一张旧照片」);</li>
+<li>停止信号(stop=Event 或回调)先于命中检查 —— 已叫停就不会再点击;</li>
+<li>wait_pic / wait_pic_any / wait_text 超时<b>自动截图</b>存 logs/shots/。</li>
+</ul>
+
+<p>裸输入不进门面: dm.MoveTo / dm.LeftClick / dm.KeyPress 直接用。</p>
+<p>所有带默认值的参数均可覆盖, 不传走默认。</p>
+
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_until.html'></a>
+<h3>wait_until</h3>
+<p class='sec'>函数简介:</p>
+<p>通用轮询底座: fn() 为真返回 True, 超时/停止 False。A/B 族地基。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_until(fn, timeout, interval=0.3, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>fn <span class='maroon'>回调</span> <b class='req'>【必传】</b>: 无参函数, 返回真值即命中<br>timeout <span class='maroon'>浮点数</span> <b class='req'>【必传】</b>: 超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.3】</b>: 轮询间隔秒<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: threading.Event 或无参回调, 触发即安静退出</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>ops.wait_until(lambda: dm.GetColor(x, y) == 'FF0000', timeout=60, stop=stop_ev)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/same_frame.html'></a>
+<h3>same_frame</h3>
+<p class='sec'>函数简介:</p>
+<p>一帧多查窗口: 窗内所有查询(exists/probe/check_*/find_all/read_*)共用同一帧 —— 省截图且判断出自同一瞬间; 出窗后查询各自现截。「点了要看新画面」的查找写在窗外(按键精灵语义)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.same_frame()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>上下文管理器</span></p>
+<p class='sec'>示例:</p>
+<pre>with ops.same_frame():
+    if ops.exists("血条.png") and ops.check_color(1, 1, "FF0000"):
+        dm.KeyPress(0x70)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/retry.html'></a>
+<h3>retry</h3>
+<p class='sec'>函数简介:</p>
+<p>动作级重试: fn() 返回真即成功; 失败退避 backoff*i 秒重来。管「做到为止」。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.retry(fn, times=3, backoff=1.0)</pre>
+<p class='sec'>参数定义:</p>
+<p>fn <span class='maroon'>回调</span> <b class='req'>【必传】</b>: 整个动作(含点击+验证)<br>times <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 3】</b>: 尝试次数<br>backoff <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 1.0】</b>: 第 i 次失败后的等待系数(秒=i*backoff)</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>ok = ops.retry(lambda: ops.find_tap("领取.png", region=R), times=3)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/shot.html'></a>
+<h3>shot</h3>
+<p class='sec'>函数简介:</p>
+<p>当前帧存档到 logs/shots/时间_标签.png(wait 族失败自动调)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.shot(tag='')</pre>
+<p class='sec'>参数定义:</p>
+<p>tag <span class='maroon'>字符串</span> <b class='opt'>【可选, 默认 】</b>: 文件名标签, 空=shot</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>Path</span></p>
+<p class='sec'>示例:</p>
+<pre>p = ops.shot("军团_领取失败")</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_pic.html'></a>
+<h3>wait_pic</h3>
+<p class='sec'>函数简介:</p>
+<p>等图出现。模板=SetPath 目录下 PNG(四角同色自动键控成透明模板)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_pic(pic, region=None, timeout=30, interval=0.4, threshold=None, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板文件名, 如 领取.png<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: (x1,y1,x2,y2) 固定 UI 必须限矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 超时秒数, 超时返 None 并自动留痕<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.4】</b>: 轮询间隔秒<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度, None=库默认 0.85<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>(x, y, 分数) 或 None</span></p>
+<p class='sec'>示例:</p>
+<pre>hit = ops.wait_pic("主界面.png", region=(0, 0, 300, 200), timeout=15)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_pic_any.html'></a>
+<h3>wait_pic_any</h3>
+<p class='sec'>函数简介:</p>
+<p>等一组模板里任一张出现(弹窗表)。缺素材自动跳过, 可渐进配齐。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_pic_any(pics, region=None, timeout=30, interval=0.4, threshold=None, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pics <span class='maroon'>列表</span> <b class='req'>【必传】</b>: 模板名列表<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.4】</b>: 轮询间隔秒<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度, None=默认<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>(名字, x, y, 分数) 或 None</span></p>
+<p class='sec'>示例:</p>
+<pre>which = ops.wait_pic_any(["升级.png", "断线.png"], region=POPUP)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_pic_gone.html'></a>
+<h3>wait_pic_gone</h3>
+<p class='sec'>函数简介:</p>
+<p>等图消失(加载页结束判定)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_pic_gone(pic, region=None, timeout=30, interval=0.4, threshold=None, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板名<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.4】</b>: 轮询间隔秒<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>ok = ops.wait_pic_gone("加载中.png", region=(400, 300, 700, 400), timeout=20)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_color.html'></a>
+<h3>wait_color</h3>
+<p class='sec'>函数简介:</p>
+<p>等色出现 —— 色比图快一个量级(转圈/倒计时)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_color(color, region=None, timeout=30, interval=0.4, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: RRGGBB 或 RRGGBB-DRDGDB<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.4】</b>: 轮询间隔秒<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>(x, y) 或 None</span></p>
+<p class='sec'>示例:</p>
+<pre>xy = ops.wait_color("FF0000", region=(0, 0, 300, 200), timeout=5)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_color_gone.html'></a>
+<h3>wait_color_gone</h3>
+<p class='sec'>函数简介:</p>
+<p>等色消失。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_color_gone(color, region=None, timeout=30, interval=0.4, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 颜色串<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.4】</b>: 轮询间隔秒<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>ok = ops.wait_color_gone("0000FF", region=(0, 0, 300, 200), timeout=10)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_text.html'></a>
+<h3>wait_text</h3>
+<p class='sec'>函数简介:</p>
+<p>OCR 等文字出现。注意关键词要与整行文字足够相似(短词配长行过不了 0.7)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_text(text, region=None, timeout=30, interval=0.5, min_ratio=0.7, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>text <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 关键词(尽量整词)<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 先裁区域再 OCR 更稳<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.5】</b>: 轮询间隔秒<br>min_ratio <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.7】</b>: 相似度门槛<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>(x, y, 相似度) 或 None(自动留痕)</span></p>
+<p class='sec'>示例:</p>
+<pre>ops.wait_text("领奖", region=(800, 500, 1200, 700))</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_stable.html'></a>
+<h3>wait_stable</h3>
+<p class='sec'>函数简介:</p>
+<p>等区域画面静止(连续 frames 帧哈希一致 = 加载完成)。注意: 逐字节全等, 区域内有轻微动画会永远不稳。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_stable(region, timeout=30, interval=0.3, frames=5, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>region <span class='maroon'>元组</span> <b class='req'>【必传】</b>: 监测矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.3】</b>: 采样间隔秒(默认 0.3s 采一次)<br>frames <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 5】</b>: 连续一致帧数(默认 5, 最快约 1.2s 判稳)<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>ok = ops.wait_stable((100, 100, 800, 600), timeout=20, frames=3)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/wait_change.html'></a>
+<h3>wait_change</h3>
+<p class='sec'>函数简介:</p>
+<p>等区域发生变化(过场结束/结算弹出), 基线=调用时第一帧。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.wait_change(region, timeout=30, interval=0.3, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>region <span class='maroon'>元组</span> <b class='req'>【必传】</b>: 监测矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.3】</b>: 采样间隔秒<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>ok = ops.wait_change((0, 0, 800, 600), timeout=15)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/find_tap.html'></a>
+<h3>find_tap</h3>
+<p class='sec'>函数简介:</p>
+<p><b>找到就拟人点</b>(最高频原语)。timeout=0 单帧试; verify=点后要等出现的确认图(二次确认, 需新帧故不能在 same_frame 窗口用)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.find_tap(pic, region=None, timeout=0, interval=0.4, threshold=None, verify=None, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板名<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0】</b>: 0=单帧试一次; &gt;0=先等到出现(秒)<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.4】</b>: 轮询间隔秒<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度, None=默认<br>verify <span class='maroon'>字符串</span> <b class='opt'>【可选, 默认 None】</b>: 点后确认模板名<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool(点到且验证过)</span></p>
+<p class='sec'>示例:</p>
+<pre>ops.find_tap("领取.png", region=R, verify="已领取.png")</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/tap_until_gone.html'></a>
+<h3>tap_until_gone</h3>
+<p class='sec'>函数简介:</p>
+<p>连点直到图消失(确定/领取类), 返回点击次数; 先等它出现(至多 5s)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.tap_until_gone(pic, region=None, timeout=10, interval=0.5, threshold=None, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板名<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 10】</b>: 连点阶段超时秒数<br>interval <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 0.5】</b>: 两次点击间隔秒<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数</span></p>
+<p class='sec'>示例:</p>
+<pre>n = ops.tap_until_gone("确定.png", region=DIALOG, timeout=8)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/swipe_find.html'></a>
+<h3>swipe_find</h3>
+<p class='sec'>函数简介:</p>
+<p>列表滚动查找: 逐屏拖动, 每屏找一次。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.swipe_find(pic, direction, region=None, timeout=30, threshold=None, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 目标模板名<br>direction <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: up / down / left / right<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 找图区域(拖动恒在窗口中央)<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 30】</b>: 总超时秒数<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: 停止信号</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>(x, y) 或 None</span></p>
+<p class='sec'>示例:</p>
+<pre>xy = ops.swipe_find("好友头像.png", "up", timeout=20)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/exists.html'></a>
+<h3>exists</h3>
+<p class='sec'>函数简介:</p>
+<p>单帧存在性(same_frame 窗内用冻结帧)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.exists(pic, region=None, threshold=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板名<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度, None=默认</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>if ops.exists("红名.png", region=(0, 0, 200, 100)): ...</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/probe.html'></a>
+<h3>probe</h3>
+<p class='sec'>函数简介:</p>
+<p>单帧多图探测: 返回第一张存在的模板名, 全无 None。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.probe(*pics, region=None, threshold=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pics <span class='maroon'>列表</span> <b class='req'>【必传】</b>: 模板名(可传多个)<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>名字 或 None</span></p>
+<p class='sec'>示例:</p>
+<pre>which = ops.probe("升级.png", "断线.png", region=POPUP)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/find_all.html'></a>
+<h3>find_all</h3>
+<p class='sec'>函数简介:</p>
+<p>找全部命中中心坐标(列表项/多目标), 近邻去重。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.find_all(pic, region=None, threshold=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>pic <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 模板名<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: 搜索矩形<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>[(x, y)]</span></p>
+<p class='sec'>示例:</p>
+<pre>pts = ops.find_all("金星.png", region=(100, 200, 400, 260))</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/check_color.html'></a>
+<h3>check_color</h3>
+<p class='sec'>函数简介:</p>
+<p>单点比色(冻结帧感知)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.check_color(x, y, color, tol=0)</pre>
+<p class='sec'>参数定义:</p>
+<p>x <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标<br>y <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 客户区坐标<br>color <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: RRGGBB 或 RRGGBB-DRDGDB<br>tol <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 0】</b>: 附加容差</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>if ops.check_color(455, 320, "00FF00"): ...</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/check_points.html'></a>
+<h3>check_points</h3>
+<p class='sec'>函数简介:</p>
+<p>多点找色单帧校验(动画元素): 首点为锚, 全点命中才真。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.check_points(points, region)</pre>
+<p class='sec'>参数定义:</p>
+<p>points <span class='maroon'>列表</span> <b class='req'>【必传】</b>: [(dx,dy,RRGGBB[,tol]), ...] pixpick 选点<br>region <span class='maroon'>元组</span> <b class='req'>【必传】</b>: 搜索矩形</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>ok = ops.check_points([(0, 0, "FF0000"), (10, 0, "00FF00")], R)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/read_number.html'></a>
+<h3>read_number</h3>
+<p class='sec'>函数简介:</p>
+<p>数字读数(小字体别硬 OCR): 模板逐字+NMS。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.read_number(region, digit_templates)</pre>
+<p class='sec'>参数定义:</p>
+<p>region <span class='maroon'>元组</span> <b class='req'>【必传】</b>: 数字所在矩形<br>digit_templates <span class='maroon'>字典</span> <b class='req'>【必传】</b>: {字符: ndarray}, pixpick 制作</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>int 或 None</span></p>
+<p class='sec'>示例:</p>
+<pre>hp = ops.read_number((60, 20, 130, 40), DIGITS)</pre>
+<a id='Ops%E9%97%A8%E9%9D%A2%28%E5%9B%BE%E8%89%B2%E7%BB%84%E5%90%88%E5%B1%82%29/read_text.html'></a>
+<h3>read_text</h3>
+<p class='sec'>函数简介:</p>
+<p>OCR 读区域全文(行间空格连接)。</p>
+<p class='sec'>函数原型:</p>
+<pre>ops.read_text(region=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: None=全客户区</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>txt = ops.read_text((0, 0, 400, 80))</pre>
+<h2 id='基本设置与模板'>基本设置与模板</h2>
+<a id='%E5%9F%BA%E6%9C%AC%E8%AE%BE%E7%BD%AE%E4%B8%8E%E6%A8%A1%E6%9D%BF/SetPath.html'></a>
+<h3>SetPath</h3>
+<p class='sec'>函数简介:</p>
+<p>设置模板/图色资源目录(每个项目入口设一次)。</p>
+<p class='sec'>函数原型:</p>
+<pre>SetPath(path)</pre>
+<p class='sec'>参数定义:</p>
+<p>path <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 目录</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.SetPath(r"D:/proj/templates")</pre>
+<a id='%E5%9F%BA%E6%9C%AC%E8%AE%BE%E7%BD%AE%E4%B8%8E%E6%A8%A1%E6%9D%BF/Ver.html'></a>
+<h3>Ver</h3>
+<p class='sec'>函数简介:</p>
+<p>版本串。</p>
+<p class='sec'>函数原型:</p>
+<pre>Ver()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串</span></p>
+<p class='sec'>示例:</p>
+<pre>print(dm.Ver())</pre>
+<a id='%E5%9F%BA%E6%9C%AC%E8%AE%BE%E7%BD%AE%E4%B8%8E%E6%A8%A1%E6%9D%BF/GetLastError.html'></a>
+<h3>GetLastError</h3>
+<p class='sec'>函数简介:</p>
+<p>最近错误码。</p>
+<p class='sec'>函数原型:</p>
+<pre>GetLastError()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数</span></p>
+<p class='sec'>示例:</p>
+<pre>err = dm.GetLastError()</pre>
+<a id='%E5%9F%BA%E6%9C%AC%E8%AE%BE%E7%BD%AE%E4%B8%8E%E6%A8%A1%E6%9D%BF/%E6%A8%A1%E6%9D%BF%E5%88%B6%E4%BD%9C%E7%BA%A6%E5%AE%9A.html'></a>
+<h3>模板制作约定</h3>
+
+<ul>
+<li>一律 <b>PNG</b>(无损+透明通道), 文件名即模板名;</li>
+<li><b>四角即底色自动键控</b>: 3 通道 PNG 四角(≥3/4)同色 → 载入自动转透明模板,</li>
+</ul>
+<p>  匹配只比笔画 —— 悬浮元素裁图后背景填统一纯色即可, 不用手工抠图;</p>
+<ul>
+<li>元素自带闪光/呼吸灯 → 只裁稳定核心(文字笔画/图标主体);</li>
+<li><b>位置固定的 UI(弹窗角上的 X 等)必须在固定矩形内搜索</b>(region),</li>
+</ul>
+<p>  否则画面其他亮色图案会误报(实测关 X 全屏搜在翅膀上得 0.94);</p>
+<ul>
+<li>多点找色素材用 pixpick 选点(tools/pixpick)。</li>
+</ul>
+
+<a id='%E5%9F%BA%E6%9C%AC%E8%AE%BE%E7%BD%AE%E4%B8%8E%E6%A8%A1%E6%9D%BF/%E5%B8%B8%E8%A7%81%E5%9D%91%E9%80%9F%E6%9F%A5.html'></a>
+<h3>常见坑速查</h3>
+
+<ul>
+<li><b>UIPI</b>: 目标以管理员运行时本进程必须同级(PostMessage err=5 / PrintWindow 全黑);</li>
+<li><b>真最小化不可截</b>(PrintWindow); 完全离屏触发 DXGI 遮挡节流(细缝停靠 park_offscreen);</li>
+<li><b>模拟器宿主窗口对合成消息免疫</b> → 模拟器一律走 adb(AdbTarget);</li>
+<li><b>中文 IME 吞前台 SendInput 字母键</b>(vk 改写 0xE5) → 打字走 UNICODE 路径(库内已处理);</li>
+<li><b>轮询型游戏</b>(GetAsyncKeyState)对消息注入免疫 → 潜影键态钩子 hook_keystate();</li>
+<li><b>DPI</b>: 非 100% 缩放先 ensure_dpi_aware()(BindWindow 内已调);</li>
+<li>全量坑清单见仓库 AGENTS.md。</li>
+</ul>
+
+<a id='%E5%9F%BA%E6%9C%AC%E8%AE%BE%E7%BD%AE%E4%B8%8E%E6%A8%A1%E6%9D%BF/%E6%9C%AA%E5%AE%9E%E7%8E%B0%E6%96%B9%E6%B3%95%E7%95%99%E4%BD%8D.html'></a>
+<h3>未实现方法留位</h3>
+<table>
+<tr><th>方法</th><th>参数</th><th>留位原因</th></tr>
+<tr><td>EnableBind</td><td>enable</td><td>暂停/恢复后台绑定</td></tr>
+<tr><td>LockInput</td><td>lock</td><td>锁定物理键鼠输入</td></tr>
+<tr><td>LockDisplay</td><td>lock</td><td>锁定图色不刷新</td></tr>
+<tr><td>HackSpeed</td><td>rate</td><td>变速齿轮(IAT hook 时间函数)</td></tr>
+<tr><td>SetAero</td><td>enable</td><td>关闭 Aero 特效</td></tr>
+<tr><td>DownCpu</td><td>type_, rate</td><td>降低本进程 CPU 占用</td></tr>
+<tr><td>SetInputDm</td><td>dm_id, rx, ry</td><td>多开输入坐标基点</td></tr>
+<tr><td>EnableSpeedDx</td><td>enable</td><td>高速 dx 键鼠</td></tr>
+<tr><td>EnableIme</td><td>enable</td><td>IME 开关联动</td></tr>
+<tr><td>EnableKeypadMsg</td><td>enable</td><td>键盘消息投递开关</td></tr>
+<tr><td>EnableMouseMsg</td><td>enable</td><td>鼠标消息投递开关</td></tr>
+<tr><td>EnableKeypadPatch</td><td>enable</td><td>键盘补丁</td></tr>
+<tr><td>SetDisplayDelay</td><td>ms</td><td>显示延迟</td></tr>
+<tr><td>SetDisplayRefreshDelay</td><td>ms</td><td>显示刷新延迟</td></tr>
+<tr><td>LockMouseRect</td><td>x1, y1, x2, y2</td><td>前台鼠标活动矩形</td></tr>
+</table>
+
+<p>调用即 raise NotImplementedError(带说明) —— 明确报错优先, 不装懂。</p>
+</body></html>
