@@ -20,7 +20,7 @@ KEY_CORNER_TOL = 8   # 四角互认同色的逐通道容差(≥3/4多数票, 容
 KEY_DIST = 8         # 键控距离: 与底色逐通道差≤此值视为透明(底色由工具实心填充)
 FLAT_EPS = 1e-6      # 零方差判定: TM_CCOEFF_NORMED 在纯色块上会满分虚高(LZG_PMH 实证)
 
-_tpl_cache: dict[str, np.ndarray] = {}
+_tpl_cache: dict[str, tuple[float, np.ndarray]] = {}
 
 
 def set_templates_dir(path) -> None:
@@ -57,23 +57,26 @@ def decode_png(png: bytes) -> np.ndarray:
 
 
 def load(name: str) -> np.ndarray:
-    """加载模板(保持原通道). 按文件名缓存. name 相对模板目录.
+    """加载模板(保持原通道). 按路径+mtime 缓存(改图免重启, 验收迭代常用).
+    name 相对模板目录.
 
     「四角即底色」约定: 3通道模板四角(≥3/4)同色时载入即自动键控成 RGBA(alpha掩码),
     匹配只比笔画 — 见 _auto_key. 手动 key_out_background 变为可选(载入已自动).
     走 read_bytes+imdecode: cv2.imread 在 Windows 含中文的路径下不可靠.
     """
     path = TEMPLATES_DIR / name
-    key = str(path)
-    if key not in _tpl_cache:
+    mtime = path.stat().st_mtime
+    hit = _tpl_cache.get(str(path))
+    if hit is None or hit[0] != mtime:
         buf = np.frombuffer(path.read_bytes(), dtype=np.uint8)
         img = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
         if img is None:
             raise FileNotFoundError(f"模板不存在或解码失败: {path}")
         if img.ndim == 3 and img.shape[2] == 3:
             img = _auto_key(img)
-        _tpl_cache[key] = img
-    return _tpl_cache[key]
+        _tpl_cache[str(path)] = (mtime, img)
+        return img
+    return hit[1]
 
 
 def key_out_background(name: str, tol: int = 8) -> float:
