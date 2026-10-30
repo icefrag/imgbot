@@ -1,14 +1,24 @@
-<!DOCTYPE html><html><head><meta charset='utf-8'><title>SetPath</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
-<h1>SetPath</h1>
-<p class='sec'>函数简介:</p>
-<p>设置模板/图色资源目录(每个项目入口设一次)。</p>
-<p class='sec'>函数原型:</p>
-<pre>SetPath(path)</pre>
-<p class='sec'>参数定义:</p>
-<p>path <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 目录</p>
-<p class='sec'>返回值:</p>
-<p><span class='maroon'>整形数: 1</span></p>
-<p class='sec'>示例:</p>
-<pre>dm.SetPath(r"D:/proj/templates")</pre>
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>Nav 总则</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>Nav 总则</h1>
+
+<p><code>nav = Nav(ops)</code> —— 构造吃一个 Ops 门面, 机制零游戏知识, 界面/边/弹窗全由</p>
+<p>消费项目注册。任务代码只声明目的地(go), 怎么走过去是图的事; 崩溃重启后从</p>
+<p>任意屏调 go 自动找回位置(挂机长跑的恢复线)。图只管界面间移动, 界面内操作</p>
+<p>(战斗/领奖)不进图 —— 判据: 做完需"换界面验证"的动作才是边。</p>
+<p>锚点资产约定 <code>nav/屏名.png</code>, 一屏一锚点, 位置固定的界面必须限矩形。</p>
+<pre>python
+nav = Nav(ops)
+nav.screen("city", "nav/city_hud.png", region=(20, 20, 180, 160))
+nav.screen("dungeon", "nav/dungeon_title.png")
+nav.edge("city", "dungeon",
+         lambda: ops.find_tap("nav/dungeon_btn.png", timeout=8))
+nav.on_interrupt(["popup/reward_ok.png"])   # 任意屏都可能冒的, 走边前轰掉
+nav.go("dungeon")                           # 不管现在在哪, 图带路
+</pre>
+<p>定位两层缺一不可: at() 期望验证(单帧一张锚点, 高频便宜); where() 全局重定位</p>
+<p>(same_frame 一帧扫全部锚点, 冷启动/迷路兜底)。go 循环: 已在即返 → 迷路先</p>
+<p>重定位 → BFS 求路 → 逐边[打断钩子→动作→验证落点], 边重试尽 → 重定位自愈</p>
+<p>(落在别的屏重算路径), 全锚点扫不到 = LostError。</p>
+
 <hr><a href='../index.html'>← 目录</a>
 </body></html>

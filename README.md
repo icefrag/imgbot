@@ -131,6 +131,26 @@ t.tap(*hit[:2])
 | `read_number(region, digit_templates)` | int \| None | 数字读数(模板逐字, 小字体别硬 OCR) |
 | `read_text(region=None)` | str | OCR 读区域全文 |
 
+### `imgbot/nav.py` —— 界面导航图(通用机制: 定位两层 + 边表 + BFS 自愈)
+
+`Nav(ops)`: 一个 Ops 门面一张图, 机制零游戏知识, 界面/边/弹窗全由消费项目注册。
+任务代码只声明目的地(`go`), 路径/恢复是图的事 —— 崩溃重启后从任意屏调 go 自动
+找回位置(挂机长跑的恢复线)。图只管界面间移动, 界面内操作(战斗/领奖)不进图
+(判据: 做完需换界面验证的才是边)。锚点资产约定 `nav/屏名.png`, 一屏一锚点。
+
+| API | 返回 | 说明 |
+|---|---|---|
+| `screen(name, anchor, region=None, threshold=None)` | — | 注册界面(一屏一锚点, 同名重注册=更新; 注册序=where 扫描序) |
+| `edge(src, dst, action, timeout=15, retries=1)` | — | 注册边: action 组 ops 原语, 走完自动验证目标屏锚点; 引用未注册界面 ValueError |
+| `on_interrupt(pics)` | — | 通用打断表: 任意屏都可能冒的弹窗, 走边前/迷路时自动轰掉 |
+| `at(name)` | bool | 期望验证: 我是不是在这屏(单帧一张锚点, 便宜高频) |
+| `where()` | 名 \| None | 全局重定位: 一帧(same_frame)扫全部锚点(冷启动/迷路兜底) |
+| `go(name, timeout=120, stop=None)` | bool | BFS 带路: 到达 True / 超时安静 False / 迷路抛 `LostError` / 无路径 ValueError |
+| `cur` | 名 \| None | 当前假设所在屏(go 成功后即目标屏) |
+
+`LostError`: 迷路且重定位失败(黑屏/掉登录/更新弹窗) —— 结构性失败, 调用方决定
+重登或报警; 边验证失败与迷路现场自动截图留痕 logs/shots/。
+
 ### `imgbot/actions.py` —— 操作层(拟人点击/轮询点击)
 
 | API | 返回 | 说明 |

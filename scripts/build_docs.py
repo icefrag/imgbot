@@ -532,6 +532,55 @@ Defender 需加一次排除(管理员):
            [("region", "元组", "None=全客户区")], S,
            "txt = ops.read_text((0, 0, 400, 80))"),
     ]),
+    # ==================== Nav 界面导航图 ====================
+    ("Nav导航图(界面带路)", [
+        _c("Nav 总则", body="""
+`nav = Nav(ops)` —— 构造吃一个 Ops 门面, 机制零游戏知识, 界面/边/弹窗全由
+消费项目注册。任务代码只声明目的地(go), 怎么走过去是图的事; 崩溃重启后从
+任意屏调 go 自动找回位置(挂机长跑的恢复线)。图只管界面间移动, 界面内操作
+(战斗/领奖)不进图 —— 判据: 做完需"换界面验证"的动作才是边。
+锚点资产约定 `nav/屏名.png`, 一屏一锚点, 位置固定的界面必须限矩形。
+```python
+nav = Nav(ops)
+nav.screen("city", "nav/city_hud.png", region=(20, 20, 180, 160))
+nav.screen("dungeon", "nav/dungeon_title.png")
+nav.edge("city", "dungeon",
+         lambda: ops.find_tap("nav/dungeon_btn.png", timeout=8))
+nav.on_interrupt(["popup/reward_ok.png"])   # 任意屏都可能冒的, 走边前轰掉
+nav.go("dungeon")                           # 不管现在在哪, 图带路
+```
+定位两层缺一不可: at() 期望验证(单帧一张锚点, 高频便宜); where() 全局重定位
+(same_frame 一帧扫全部锚点, 冷启动/迷路兜底)。go 循环: 已在即返 → 迷路先
+重定位 → BFS 求路 → 逐边[打断钩子→动作→验证落点], 边重试尽 → 重定位自愈
+(落在别的屏重算路径), 全锚点扫不到 = LostError。
+"""),
+        _m("screen", "nav.screen(name, anchor, region=None, threshold=None)",
+           "注册界面: 一屏一锚点。同名重注册=更新锚点(不用改边表); 注册序即 where 扫描序, 判别力强的锚点先注册。",
+           [("name", S, "界面名(任务代码/go 用它引用)"),
+            ("anchor", S, "锚点模板名(nav/屏名.png 约定)"),
+            ("region", "元组", "(x1,y1,x2,y2) 位置固定 UI 必须限矩形"),
+            ("threshold", F, "相似度, None=库默认 0.85")]),
+        _m("edge", "nav.edge(src, dst, action, timeout=15, retries=1)",
+           "注册边: action 组 ops 原语, 返回假/抛错=本边失败整边重来; 走完自动验证目标屏锚点。",
+           [("src", S, "源界面名"),
+            ("dst", S, "目标界面名"),
+            ("action", "函数", "无参可调用, 组 ops.find_tap/wait_pic 等"),
+            ("timeout", F, "动作成功后等目标屏锚点的验证秒数(加载屏算在内)"),
+            ("retries", I, "额外重试次数")]),
+        _m("on_interrupt", "nav.on_interrupt(pics)",
+           "通用打断表: 任意界面都可能冒的弹窗(奖励/公告/升级), 每次走边前和迷路时自动轰掉。可多次调用追加。",
+           [("pics", L, "弹窗模板名列表")]),
+        _m("at", "nav.at(name)", "期望验证: 我是不是在这屏(单帧一张锚点, 冻结窗内用冻结帧)。",
+           [("name", S, "界面名")], "bool"),
+        _m("where", "nav.where()", "全局重定位: 一帧(same_frame 共帧)扫全部锚点, 返回界面名, 全不中 None。",
+           (), "界面名 或 None"),
+        _m("go", "nav.go(name, timeout=120, stop=None)",
+           "走到目标界面。到达 True; 总超时/停止安静 False(失败语义调用方交代); 迷路抛 LostError(黑屏/掉登录, 需重登); 无可达路径/未注册 ValueError(建图错误启动即大声)。边验证失败与迷路现场自动截图留痕。",
+           [("name", S, "目标界面名"),
+            ("timeout", F, "总超时秒数"),
+            ("stop", "对象", "threading.Event 或无参回调, 触发即安静退出")],
+           "bool", "ok = nav.go('dungeon', timeout=60)"),
+    ]),
     # ==================== 基本设置与模板 ====================
     ("基本设置与模板", [
         _m("SetPath", "SetPath(path)",
@@ -586,8 +635,9 @@ STUBS = {
 # ==================== 签名内省(必传/默认值的权威来源) ====================
 def _func_of(name: str):
     from imgbot.dmsoft import DmSoft
+    from imgbot.nav import Nav
     from imgbot.ops import Ops
-    for cls in (DmSoft, Ops):
+    for cls in (DmSoft, Ops, Nav):
         f = getattr(cls, name, None)
         if f is not None:
             return f

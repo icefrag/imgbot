@@ -6,6 +6,7 @@
 <a href='#键鼠'>键鼠</a>
 <a href='#窗口'>窗口</a>
 <a href='#Ops门面(图色组合层)'>Ops门面(图色组合层)</a>
+<a href='#Nav导航图(界面带路)'>Nav导航图(界面带路)</a>
 <a href='#基本设置与模板'>基本设置与模板</a>
 </div>
 <h2 id='入门'>入门</h2>
@@ -1058,11 +1059,94 @@ dm.UnBindWindow()
 <p class='sec'>函数原型:</p>
 <pre>ops.read_text(region=None)</pre>
 <p class='sec'>参数定义:</p>
-<p>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: None=全客户区</p>
+<p>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: None=全客户区<br>fast <span class='maroon'></span> <b class='opt'>【可选, 默认 False】</b>: </p>
 <p class='sec'>返回值:</p>
 <p><span class='maroon'>字符串</span></p>
 <p class='sec'>示例:</p>
 <pre>txt = ops.read_text((0, 0, 400, 80))</pre>
+<h2 id='Nav导航图(界面带路)'>Nav导航图(界面带路)</h2>
+<a id='Nav%E5%AF%BC%E8%88%AA%E5%9B%BE%28%E7%95%8C%E9%9D%A2%E5%B8%A6%E8%B7%AF%29/Nav_%E6%80%BB%E5%88%99.html'></a>
+<h3>Nav 总则</h3>
+
+<p><code>nav = Nav(ops)</code> —— 构造吃一个 Ops 门面, 机制零游戏知识, 界面/边/弹窗全由</p>
+<p>消费项目注册。任务代码只声明目的地(go), 怎么走过去是图的事; 崩溃重启后从</p>
+<p>任意屏调 go 自动找回位置(挂机长跑的恢复线)。图只管界面间移动, 界面内操作</p>
+<p>(战斗/领奖)不进图 —— 判据: 做完需"换界面验证"的动作才是边。</p>
+<p>锚点资产约定 <code>nav/屏名.png</code>, 一屏一锚点, 位置固定的界面必须限矩形。</p>
+<pre>python
+nav = Nav(ops)
+nav.screen("city", "nav/city_hud.png", region=(20, 20, 180, 160))
+nav.screen("dungeon", "nav/dungeon_title.png")
+nav.edge("city", "dungeon",
+         lambda: ops.find_tap("nav/dungeon_btn.png", timeout=8))
+nav.on_interrupt(["popup/reward_ok.png"])   # 任意屏都可能冒的, 走边前轰掉
+nav.go("dungeon")                           # 不管现在在哪, 图带路
+</pre>
+<p>定位两层缺一不可: at() 期望验证(单帧一张锚点, 高频便宜); where() 全局重定位</p>
+<p>(same_frame 一帧扫全部锚点, 冷启动/迷路兜底)。go 循环: 已在即返 → 迷路先</p>
+<p>重定位 → BFS 求路 → 逐边[打断钩子→动作→验证落点], 边重试尽 → 重定位自愈</p>
+<p>(落在别的屏重算路径), 全锚点扫不到 = LostError。</p>
+
+<a id='Nav%E5%AF%BC%E8%88%AA%E5%9B%BE%28%E7%95%8C%E9%9D%A2%E5%B8%A6%E8%B7%AF%29/screen.html'></a>
+<h3>screen</h3>
+<p class='sec'>函数简介:</p>
+<p>注册界面: 一屏一锚点。同名重注册=更新锚点(不用改边表); 注册序即 where 扫描序, 判别力强的锚点先注册。</p>
+<p class='sec'>函数原型:</p>
+<pre>nav.screen(name, anchor, region=None, threshold=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 界面名(任务代码/go 用它引用)<br>anchor <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 锚点模板名(nav/屏名.png 约定)<br>region <span class='maroon'>元组</span> <b class='opt'>【可选, 默认 None】</b>: (x1,y1,x2,y2) 位置固定 UI 必须限矩形<br>threshold <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 None】</b>: 相似度, None=库默认 0.85</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'></span></p>
+<a id='Nav%E5%AF%BC%E8%88%AA%E5%9B%BE%28%E7%95%8C%E9%9D%A2%E5%B8%A6%E8%B7%AF%29/edge.html'></a>
+<h3>edge</h3>
+<p class='sec'>函数简介:</p>
+<p>注册边: action 组 ops 原语, 返回假/抛错=本边失败整边重来; 走完自动验证目标屏锚点。</p>
+<p class='sec'>函数原型:</p>
+<pre>nav.edge(src, dst, action, timeout=15, retries=1)</pre>
+<p class='sec'>参数定义:</p>
+<p>src <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 源界面名<br>dst <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 目标界面名<br>action <span class='maroon'>函数</span> <b class='req'>【必传】</b>: 无参可调用, 组 ops.find_tap/wait_pic 等<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 15.0】</b>: 动作成功后等目标屏锚点的验证秒数(加载屏算在内)<br>retries <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 1】</b>: 额外重试次数</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'></span></p>
+<a id='Nav%E5%AF%BC%E8%88%AA%E5%9B%BE%28%E7%95%8C%E9%9D%A2%E5%B8%A6%E8%B7%AF%29/on_interrupt.html'></a>
+<h3>on_interrupt</h3>
+<p class='sec'>函数简介:</p>
+<p>通用打断表: 任意界面都可能冒的弹窗(奖励/公告/升级), 每次走边前和迷路时自动轰掉。可多次调用追加。</p>
+<p class='sec'>函数原型:</p>
+<pre>nav.on_interrupt(pics)</pre>
+<p class='sec'>参数定义:</p>
+<p>pics <span class='maroon'>列表</span> <b class='req'>【必传】</b>: 弹窗模板名列表</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'></span></p>
+<a id='Nav%E5%AF%BC%E8%88%AA%E5%9B%BE%28%E7%95%8C%E9%9D%A2%E5%B8%A6%E8%B7%AF%29/at.html'></a>
+<h3>at</h3>
+<p class='sec'>函数简介:</p>
+<p>期望验证: 我是不是在这屏(单帧一张锚点, 冻结窗内用冻结帧)。</p>
+<p class='sec'>函数原型:</p>
+<pre>nav.at(name)</pre>
+<p class='sec'>参数定义:</p>
+<p>name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 界面名</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<a id='Nav%E5%AF%BC%E8%88%AA%E5%9B%BE%28%E7%95%8C%E9%9D%A2%E5%B8%A6%E8%B7%AF%29/where.html'></a>
+<h3>where</h3>
+<p class='sec'>函数简介:</p>
+<p>全局重定位: 一帧(same_frame 共帧)扫全部锚点, 返回界面名, 全不中 None。</p>
+<p class='sec'>函数原型:</p>
+<pre>nav.where()</pre>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>界面名 或 None</span></p>
+<a id='Nav%E5%AF%BC%E8%88%AA%E5%9B%BE%28%E7%95%8C%E9%9D%A2%E5%B8%A6%E8%B7%AF%29/go.html'></a>
+<h3>go</h3>
+<p class='sec'>函数简介:</p>
+<p>走到目标界面。到达 True; 总超时/停止安静 False(失败语义调用方交代); 迷路抛 LostError(黑屏/掉登录, 需重登); 无可达路径/未注册 ValueError(建图错误启动即大声)。边验证失败与迷路现场自动截图留痕。</p>
+<p class='sec'>函数原型:</p>
+<pre>nav.go(name, timeout=120, stop=None)</pre>
+<p class='sec'>参数定义:</p>
+<p>name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 目标界面名<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 120.0】</b>: 总超时秒数<br>stop <span class='maroon'>对象</span> <b class='opt'>【可选, 默认 None】</b>: threading.Event 或无参回调, 触发即安静退出</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
+<p class='sec'>示例:</p>
+<pre>ok = nav.go('dungeon', timeout=60)</pre>
 <h2 id='基本设置与模板'>基本设置与模板</h2>
 <a id='%E5%9F%BA%E6%9C%AC%E8%AE%BE%E7%BD%AE%E4%B8%8E%E6%A8%A1%E6%9D%BF/SetPath.html'></a>
 <h3>SetPath</h3>

@@ -1,15 +1,12 @@
-<!DOCTYPE html><html><head><meta charset='utf-8'><title>常见坑速查</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
-<h1>常见坑速查</h1>
-
-<ul>
-<li><b>UIPI</b>: 目标以管理员运行时本进程必须同级(PostMessage err=5 / PrintWindow 全黑);</li>
-<li><b>真最小化不可截</b>(PrintWindow); 完全离屏触发 DXGI 遮挡节流(细缝停靠 park_offscreen);</li>
-<li><b>模拟器宿主窗口对合成消息免疫</b> → 模拟器一律走 adb(AdbTarget);</li>
-<li><b>中文 IME 吞前台 SendInput 字母键</b>(vk 改写 0xE5) → 打字走 UNICODE 路径(库内已处理);</li>
-<li><b>轮询型游戏</b>(GetAsyncKeyState)对消息注入免疫 → 潜影键态钩子 hook_keystate();</li>
-<li><b>DPI</b>: 非 100% 缩放先 ensure_dpi_aware()(BindWindow 内已调);</li>
-<li>全量坑清单见仓库 AGENTS.md。</li>
-</ul>
-
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>at</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>at</h1>
+<p class='sec'>函数简介:</p>
+<p>期望验证: 我是不是在这屏(单帧一张锚点, 冻结窗内用冻结帧)。</p>
+<p class='sec'>函数原型:</p>
+<pre>nav.at(name)</pre>
+<p class='sec'>参数定义:</p>
+<p>name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 界面名</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>bool</span></p>
 <hr><a href='../index.html'>← 目录</a>
 </body></html>

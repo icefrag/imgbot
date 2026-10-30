@@ -10,6 +10,7 @@ import re
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -17,7 +18,7 @@ import cv2
 import numpy as np
 
 from . import actions, adb as adb_mod
-from . import ime, vision
+from . import ime, nav as nav_mod, vision
 from .ocr import best_match
 from .readout import enlarge, read_digits
 from .win32.capture import capture_client, capture_screen, virtual_screen_rect
@@ -542,6 +543,93 @@ def main():
     finally:
         cleanup2()
 
+    # ---- nav: 界面导航图(定位两层/BFS/自愈/迷路/打断, 离线 FakeOps) ----
+    class FakeOps:
+        """锚点名当"画面": state=当前屏, popups=屏上挂着的弹窗。"""
+        def __init__(self):
+            self.state, self.popups, self.tapped = "a_city", [], []
+        @contextmanager
+        def same_frame(self):
+            yield self
+        def exists(self, pic, region=None, threshold=None):
+            return pic == self.state or pic in self.popups
+        def wait_pic(self, pic, region=None, timeout=30, interval=0.4,
+                     threshold=None, stop=None):
+            return (0, 0, 1.0) if self.exists(pic) else None
+        def probe(self, *pics, region=None, threshold=None):
+            return next((p for p in pics if p in self.popups), None)
+        def find_tap(self, pic, region=None, timeout=0, interval=0.4,
+                     threshold=None, verify=None, stop=None):
+            if pic in self.popups:
+                self.popups.remove(pic)
+                self.tapped.append(pic)
+                return True
+            return False
+        def shot(self, tag=""):
+            return Path("logs/shots") / f"{tag}.png"
+
+    def to(fake, target):                      # 造边动作: 落到 target 屏
+        def act():
+            fake.state = target
+            return True
+        return act
+
+    fo = FakeOps()
+    nav = nav_mod.Nav(fo)
+    nav.screen("city", "a_city")
+    nav.screen("menu", "a_menu")
+    nav.screen("dg", "a_dg")
+    nav.edge("city", "menu", to(fo, "a_menu"))
+    nav.edge("menu", "dg", to(fo, "a_dg"))
+    nav.edge("dg", "city", to(fo, "a_city"))
+    nav.on_interrupt(["a_popup"])
+    fo.popups.append("a_popup")
+    assert nav.go("dg") is True and nav.cur == "dg", "基础 BFS 带路+打断轰弹窗"
+    assert fo.tapped == ["a_popup"], "走边前应把弹窗点掉"
+    assert nav.at("dg") and nav.where() == "dg"
+    assert nav.go("dg") is True, "已在目标应零成本直返"
+    fo.state = "a_city"
+    assert nav.go("city") is True, "回头路(dg->city)"
+
+    # 自愈: 边动作点歪落在意外屏(非目标), 重试尽后重定位换路仍能到达
+    fo2 = FakeOps()
+    nav2 = nav_mod.Nav(fo2)
+    for n, a in (("city", "a_city"), ("menu", "a_menu"), ("dg", "a_dg")):
+        nav2.screen(n, a)
+    nav2.edge("city", "menu", to(fo2, "a_dg"))       # 点歪: 想去 menu 落在 dg
+    nav2.edge("dg", "menu", to(fo2, "a_menu"))
+    assert nav2.go("menu") is True and nav2.cur == "menu", "点歪后应重定位自愈"
+
+    # 迷路: 全锚点扫不到(黑屏/掉登录) → LostError
+    fo3 = FakeOps()
+    fo3.state = "a_black_screen"
+    nav3 = nav_mod.Nav(fo3)
+    nav3.screen("city", "a_city")
+    try:
+        nav3.go("city")
+        raise AssertionError("迷路应抛 LostError")
+    except nav_mod.LostError:
+        pass
+
+    # 建图错误大声: 未注册界面/无可达路径/边引用未注册界面
+    try:
+        nav3.go("nowhere")
+        raise AssertionError("未注册目标应 ValueError")
+    except ValueError:
+        pass
+    try:
+        nav3.edge("city", "nowhere", to(fo3, "a_city"))
+        raise AssertionError("边引用未注册界面应 ValueError")
+    except ValueError:
+        pass
+    nav3.screen("island", "a_island")
+    fo3.state = "a_city"
+    try:
+        nav3.go("island")
+        raise AssertionError("无可达路径应 ValueError")
+    except ValueError:
+        pass
+
     _check_readme_api()
     _check_no_swallowed_code()
 
@@ -570,11 +658,11 @@ def _check_readme_api():
     if not readme.exists():          # 装成 wheel 后 README 不在包里, 跳过
         return
     text = readme.read_text(encoding="utf-8")
-    from . import actions, adb, ime, ocr, ops, readout, target, vision
+    from . import actions, adb, ime, nav, ocr, ops, readout, target, vision
     from .win32 import capture
     from .win32 import input as win_input
     from .win32 import window
-    modules = [vision, ocr, readout, actions, adb, ime, target, ops,
+    modules = [vision, ocr, readout, actions, adb, ime, target, ops, nav,
                window, capture, win_input]
     # `模块.名` 形式(可带不带括号): 名必须真实可取(含 win32 子模块的写法)
     # 模块名按 README 里的简称匹配: vision/ocr/readout/actions/adb/ime/target + win32 三件

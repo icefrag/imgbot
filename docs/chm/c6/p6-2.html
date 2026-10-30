@@ -1,12 +1,12 @@
-<!DOCTYPE html><html><head><meta charset='utf-8'><title>GetLastError</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
-<h1>GetLastError</h1>
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>edge</title><style>body{font-family:'Microsoft YaHei',SimSun,sans-serif;margin:24px auto;max-width:860px;color:#222;line-height:1.65;padding:0 16px}h1{border-bottom:2px solid #2b5797;color:#2b5797;padding-bottom:6px}h2{border-left:5px solid #2b5797;padding-left:8px;margin-top:2em}h3{color:#1a3d6d;margin-bottom:2px}.sec{color:blue;font-weight:bold;margin:14px 0 4px}pre{background:#f5f5f5;border:1px solid #ddd;border-radius:4px;padding:10px;overflow:auto}code{background:#f0f0f0;padding:1px 4px;border-radius:3px}table{border-collapse:collapse;width:100%;margin:8px 0}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#eef}.maroon{color:maroon}.req{color:#c00;font-weight:bold}.opt{color:#060}.nav{background:#f8f8f8;border:1px solid #ddd;padding:10px;border-radius:6px}.nav a{margin-right:12px;text-decoration:none}</style></head><body>
+<h1>edge</h1>
 <p class='sec'>函数简介:</p>
-<p>最近错误码。</p>
+<p>注册边: action 组 ops 原语, 返回假/抛错=本边失败整边重来; 走完自动验证目标屏锚点。</p>
 <p class='sec'>函数原型:</p>
-<pre>GetLastError()</pre>
+<pre>nav.edge(src, dst, action, timeout=15, retries=1)</pre>
+<p class='sec'>参数定义:</p>
+<p>src <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 源界面名<br>dst <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 目标界面名<br>action <span class='maroon'>函数</span> <b class='req'>【必传】</b>: 无参可调用, 组 ops.find_tap/wait_pic 等<br>timeout <span class='maroon'>浮点数</span> <b class='opt'>【可选, 默认 15.0】</b>: 动作成功后等目标屏锚点的验证秒数(加载屏算在内)<br>retries <span class='maroon'>整形数</span> <b class='opt'>【可选, 默认 1】</b>: 额外重试次数</p>
 <p class='sec'>返回值:</p>
-<p><span class='maroon'>整形数</span></p>
-<p class='sec'>示例:</p>
-<pre>err = dm.GetLastError()</pre>
+<p><span class='maroon'></span></p>
 <hr><a href='../index.html'>← 目录</a>
 </body></html>

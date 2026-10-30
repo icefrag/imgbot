@@ -388,32 +388,65 @@
 		</OBJECT>
 	</UL>
 	<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="Nav导航图(界面带路)">
+	</OBJECT>
+	<UL>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="Nav 总则">
+		<param name="Local" value="c6/p6-0.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="screen">
+		<param name="Local" value="c6/p6-1.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="edge">
+		<param name="Local" value="c6/p6-2.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="on_interrupt">
+		<param name="Local" value="c6/p6-3.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="at">
+		<param name="Local" value="c6/p6-4.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="where">
+		<param name="Local" value="c6/p6-5.html">
+		</OBJECT>
+		<LI> <OBJECT type="text/sitemap">
+		<param name="Name" value="go">
+		<param name="Local" value="c6/p6-6.html">
+		</OBJECT>
+	</UL>
+	<LI> <OBJECT type="text/sitemap">
 		<param name="Name" value="基本设置与模板">
 	</OBJECT>
 	<UL>
 		<LI> <OBJECT type="text/sitemap">
 		<param name="Name" value="SetPath">
-		<param name="Local" value="c6/p6-0.html">
+		<param name="Local" value="c7/p7-0.html">
 		</OBJECT>
 		<LI> <OBJECT type="text/sitemap">
 		<param name="Name" value="Ver">
-		<param name="Local" value="c6/p6-1.html">
+		<param name="Local" value="c7/p7-1.html">
 		</OBJECT>
 		<LI> <OBJECT type="text/sitemap">
 		<param name="Name" value="GetLastError">
-		<param name="Local" value="c6/p6-2.html">
+		<param name="Local" value="c7/p7-2.html">
 		</OBJECT>
 		<LI> <OBJECT type="text/sitemap">
 		<param name="Name" value="模板制作约定">
-		<param name="Local" value="c6/p6-3.html">
+		<param name="Local" value="c7/p7-3.html">
 		</OBJECT>
 		<LI> <OBJECT type="text/sitemap">
 		<param name="Name" value="常见坑速查">
-		<param name="Local" value="c6/p6-4.html">
+		<param name="Local" value="c7/p7-4.html">
 		</OBJECT>
 		<LI> <OBJECT type="text/sitemap">
 		<param name="Name" value="未实现方法留位">
-		<param name="Local" value="c6/p6-5.html">
+		<param name="Local" value="c7/p7-5.html">
 		</OBJECT>
 	</UL>
 </UL>
