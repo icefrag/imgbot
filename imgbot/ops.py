@@ -289,6 +289,26 @@ class Ops:
             pts.append(Pt(p[0], p[1], (b, g, r), t + (p[3] if len(p) > 3 else 0)))
         return vision.find_by_points(self._frame(), region, pts) is not None
 
+    def find_multi_color(self, rect, points, direction: int = 0
+                         ) -> tuple[int, int] | None:
+        """多点找色(大漠 FindMultiColor 对应物): 锚点在 rect 内搜索, 全部
+        相对偏移点同时命中才返回锚点坐标 (x, y) 或 None —— 色块与同色文字
+        的判别器。points 为 Pt 列表(pixpick 生产, 见 多点找色Pt规范.md), 也收
+        check_points 同款 [(dx,dy,"RRGGBB"[,tol]), ...] 色串简写。
+        direction: 多候选时取哪个, 0 左上 1 左下 2 右上 3 右下。"""
+        from .vision import Pt
+        if not points:
+            return None
+        if isinstance(points[0], Pt):
+            pts = points
+        else:
+            pts = []
+            for p in points:
+                (b, g, r), t = _bgr(p[2])
+                pts.append(Pt(p[0], p[1], (b, g, r),
+                              t + (p[3] if len(p) > 3 else 0)))
+        return vision.find_by_points(self._frame(), rect, pts, direction)
+
     def read_number(self, region, digit_templates) -> int | None:
         """数字读数(小字体别硬 OCR —— 模板逐字 + NMS)。digit_templates:
         {字符: ndarray} 由消费项目用 pixpick 制作(含 0-9 即可)。读不出 None。"""

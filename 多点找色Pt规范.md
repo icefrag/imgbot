@@ -1,13 +1,13 @@
 # 多点找色 · Pt 入参规范(pixpick ↔ find_by_points 对接契约)
 
-2026-10-02 定稿。消费方:库侧 `imgbot/vision.py` 的 `find_by_points` / `bot/ops.py` 的 `find_points`。
+2026-10-02 定稿。消费方:库侧 `imgbot/vision.py` 的 `find_by_points` / `imgbot/ops.py` 的 `find_multi_color`。
 生产方:pixpick「选点找色」页(`D:/script-workspace/tools/pixpick`, 独立项目)。
 **任一侧改动必须同步本文件 + 两侧自检**(验收见文末)。
 
 ## 消费方签名
 
     vision.find_by_points(screen_bgr, rect, points, direction=0) -> (x, y) | None
-    ops.find_points(w, rect, points, direction=0, screen=None)   # 业务层入口, 自动截图
+    ops.find_multi_color(rect, points, direction=0)   # 业务层入口(大漠 FindMultiColor 对应物), 自动截图
 
 - `rect=(x1,y1,x2,y2)` 搜索矩形, **尽量小别全屏**(pixpick 按点阵外扩 12px 生成);
 - `points` 为 `Pt` 列表, **第一个点是锚点**(通常 `Pt(0, 0, 色, tol)`);
