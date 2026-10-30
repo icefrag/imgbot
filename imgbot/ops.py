@@ -309,6 +309,12 @@ class Ops:
                               t + (p[3] if len(p) > 3 else 0)))
         return vision.find_by_points(self._frame(), rect, pts, direction)
 
+    def find_text(self, text: str, region=None, min_ratio: float = 0.7):
+        """单帧找文字位置(大漠 FindStr 对应物): OCR 定位+按序比例匹配,
+        返回 (中心x, 中心y, 相似度) 或 None。关键词 ≥4 字才稳(2 字短词
+        比例上限低, 需缩 region 并降 min_ratio)。"""
+        return ocr.find_text(self._frame(), text, region, min_ratio)
+
     def read_number(self, region, digit_templates) -> int | None:
         """数字读数(小字体别硬 OCR —— 模板逐字 + NMS)。digit_templates:
         {字符: ndarray} 由消费项目用 pixpick 制作(含 0-9 即可)。读不出 None。"""
@@ -316,9 +322,11 @@ class Ops:
         s = readout.read_digits(frame, digit_templates)
         return int(s) if s.strip().lstrip("-").isdigit() else None
 
-    def read_text(self, region=None) -> str:
-        """OCR 读区域全文(悬浮世界的文字先裁区域), 行间空格连接。"""
-        return " ".join(t for _x, _y, t in ocr.find_lines(self._frame(), region))
+    def read_text(self, region=None, fast: bool = False) -> str:
+        """OCR 读区域全文(悬浮世界的文字先裁区域), 行间空格连接。
+        fast=True 快引擎(大字窄条, 小字漏读)。"""
+        return " ".join(t for _x, _y, t
+                        in ocr.find_lines(self._frame(), region, fast))
 
     # ================= 内部 =================
     def _frame(self) -> np.ndarray:
