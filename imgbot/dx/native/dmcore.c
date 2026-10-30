@@ -69,6 +69,7 @@ static HANDLE  g_map;
 static HANDLE  g_mutex;
 static Header *g_hdr;
 static volatile LONG g_stopping = 0;
+static volatile LONG g_detached = 1;   /* BYE 后 our_present 只转发不捕获; 重绑清零续捕 */
 static HWND    g_hwnd;                 /* 键鼠目标窗口(CMD_BIND) */
 static DWORD   g_selfBase;              /* 本 DLL 基址(崩溃定位用) */
 static DWORD   g_buttons;              /* 当前按住状态(MK_ 位) */
@@ -528,6 +529,10 @@ static HRESULT WINAPI our_present(void *dev, const RECT *src, const RECT *dst,
     /* 二分掩码(DIAG(100), 宿主写): bit0=GetBackBuffer bit1=GetDesc
        bit2=CreateOffscreen bit3=GRTD bit4=Lock+copy; 0=全开, -1=纯尾跳零副作用 */
     LONG entered = InterlockedIncrement(&g_enterCount);
+    if (g_detached) {                   /* BYE 后闸住: g_hdr 视图已拆, 不碰, 只转发 */
+        __attribute__((musttail))
+        return g_realPresent[0](dev, src, dst, wnd, rgn, flags);
+    }
     if (g_hdr) DIAG(59) = (DWORD)entered;
     DWORD mask = g_hdr ? DIAG(100) : 0;
     if (!mask) mask = 0x1F;
@@ -653,7 +658,9 @@ static void *WINAPI our_d3dcreate9(UINT sdk)
     void *d3d = ((void *(WINAPI *)(UINT))g_d3d9Tramp)(sdk);
     /* 应用刚拿到自己的 d3d9 对象(堆私有 vtable): 补它的 CreateDevice 槽,
        一次性自拆(our_create_device 首调即还原) —— 内部调用者永不见包装 */
-    if (d3d && g_d3dVt == NULL && g_realCreateDevice == NULL) {
+    if (d3d && g_d3dVt == NULL) {
+        /* 每个新 d3d9 对象都补 slot16(g_d3dVt 在 BYE 时复位): 重绑后游戏重建
+           的对象也能被钩到; g_realCreateDevice 已有值就复用(同一直函数) */
         void **vt = *(void ***)d3d;
         DWORD oldProt;
         if (VirtualProtect(&vt[16], sizeof(void *), PAGE_READWRITE, &oldProt)) {
@@ -670,7 +677,10 @@ static void *WINAPI our_d3dcreate9(UINT sdk)
 
 static int hook_d3d9(void)
 {
-    if (g_d3d9Tramp) return 0;                          /* 已挂 */
+    if (g_d3d9Tramp) {                                  /* 本会话已挂(重复调用): 清闸即恢复 */
+        InterlockedExchange(&g_detached, 0);
+        return 0;
+    }
     HMODULE d3d = GetModuleHandleA("d3d9.dll");
     if (!d3d) d3d = LoadLibraryA("d3d9.dll");           /* 目标还没加载就先代载 */
     if (!d3d) return 60;
@@ -681,28 +691,32 @@ static int hook_d3d9(void)
     g_d3d9Func = func;
     DWORD *diag = (DWORD *)((BYTE *)g_hdr + 2048 + 128);
     diag[0] = (DWORD)(DWORD_PTR)g_d3d9Tramp;            /* 蹦床地址留档 */
+    InterlockedExchange(&g_detached, 0);                /* 首装清闸, our_present 可捕获 */
     return 0;
 }
 
 static void unhook_d3d9(void)
 {
-    if (!g_nVt) return;
-    InterlockedExchange(&g_stopping, 1);
-    Sleep(60);                                          /* 等渲染线程离开 our_present */
+    if (!g_d3d9Tramp && !g_nVt) return;
+    InterlockedExchange(&g_detached, 1);               /* 先闸住 our_present */
+    Sleep(60);                                         /* 等在途捕获出完(还要放 sysSurf) */
     if (g_sysSurf) {
         ((ULONG (WINAPI *)(void *))(*(void ***)g_sysSurf)[SURF_RELEASE])(g_sysSurf);
         g_sysSurf = NULL;
     }
-    for (int i = 0; i < g_nVt; i++) {
+    g_d3dVt = NULL;      /* 允许 our_d3dcreate9 给重绑后新建的 d3d9 对象补 slot16 */
+    /* Direct3DCreate9 热补丁还原+复位(重绑时注入器复用驻留模块, hook_d3d9 重走全新
+     * 挂载路径并清 detached); 设备 vtable 钩故意不还原 —— detached 闸着纯转发,
+     * 在世设备靠它无缝续捕。g_nVt/g_devVt[] 保留作代数记账(g_nVt<3 上限)。 */
+    if (g_d3d9Tramp) {
         DWORD oldProt;
-        VirtualProtect(&((void **)g_devVt[i])[D3D9_PRESENT], sizeof(void *),
-                       PAGE_READWRITE, &oldProt);
-        ((void **)g_devVt[i])[D3D9_PRESENT] = (void *)g_realPresent[i];
-        VirtualProtect(&((void **)g_devVt[i])[D3D9_PRESENT], sizeof(void *),
-                       oldProt, &oldProt);
+        VirtualProtect(g_d3d9Func, 5, PAGE_EXECUTE_READWRITE, &oldProt);
+        memcpy(g_d3d9Func, g_d3d9Orig5, 5);
+        VirtualProtect(g_d3d9Func, 5, oldProt, &oldProt);
+        FlushInstructionCache(GetCurrentProcess(), g_d3d9Func, 5);
+        VirtualFree(g_d3d9Tramp, 0, MEM_RELEASE);
+        g_d3d9Tramp = NULL; g_d3d9Func = NULL;
     }
-    g_nVt = 0;
-    InterlockedExchange(&g_stopping, 0);
 }
 
 /* ---- 假激活(大漠 EnableFakeActive / dx.public.active.*): 子类化目标窗口,
@@ -999,7 +1013,9 @@ __declspec(dllexport) DWORD DxInit(void)
         return 6;                                /* 旧实例仍在, 先 BYE 再注入 */
     }
     if (!g_mutex) return 5;
-    AddVectoredExceptionHandler(1, veh);
+    static LONG vehAdded = 0;                    /* 重绑=同模块再 DxInit, VEH 只挂一次 */
+    if (InterlockedExchange(&vehAdded, 1) == 0)
+        AddVectoredExceptionHandler(1, veh);
     g_selfBase = (DWORD)(DWORD_PTR)g_self;
     HANDLE t = CreateThread(NULL, 0, worker, NULL, 0, NULL);
     if (!t) { CloseHandle(g_mutex); g_mutex = NULL; return 5; }

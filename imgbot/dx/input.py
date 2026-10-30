@@ -83,8 +83,10 @@ class DxMouseKeyboard:
         self.host.mouse(x, y, M_LUP)
         self._pos = (x, y)
 
-    def middle_click(self, x: int = None, y: int = None):
+    def middle_click(self, x: int | None = None, y: int | None = None):
         """中键在指定点(默认当前光标位)按下/抬起(大漠 MiddleClick)。"""
+        if (x is None) != (y is None):
+            raise ValueError("x/y 须成对给出, 或都缺省用当前光标位")
         px, py = (x, y) if x is not None else self._pos
         self._move(px, py)
         time.sleep(self.delay)

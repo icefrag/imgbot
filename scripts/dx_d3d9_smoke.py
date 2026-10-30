@@ -76,7 +76,25 @@ def main():
             f3 = host.capture(fresh_wait=1.5)
             print(f"遮挡测试: 半屏外 frame_seq {s0} -> {s1} "
                   f"({'仍在渲染, 后台可截' if s1 > s0 else '停渲染了!'})")
-            ok = d > 5 and s1 > s0
+
+            # 重绑续捕(BYE 后 detached 闸住 our_present, 重绑 hook_d3d9 清闸无缝续捕):
+            # 同一进程 unbind -> bind -> hook_d3d9 -> 必须再见到新帧流(修复前假成功死局)
+            host.unbind()
+            host.bind()
+            host.hook_d3d9()
+            seq2 = 0
+            t0 = time.time()
+            while time.time() - t0 < 10:
+                seq2 = host.frame_info()[0]
+                if seq2:
+                    break
+                time.sleep(0.3)
+            f4 = host.capture(fresh_wait=1.5)
+            d2 = mean_diff(f3, f4)
+            ok_rebind = seq2 > 0 and d2 > 5
+            print(f"重绑续捕: frame_seq={seq2} 帧差={d2:.1f} "
+                  f"({'续捕正常' if ok_rebind else '重绑后死帧!'})")
+            ok = d > 5 and s1 > s0 and ok_rebind
             print("d3d9 验收:", "PASS" if ok else "FAIL")
             return 0 if ok else 4
         finally:

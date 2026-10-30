@@ -2,7 +2,7 @@
 """dx 注入通道(阶段1): 大漠 dx 模式的复刻件。
 
 宿主侧纯 ctypes, 注入件需先构建: uv run dx/native/build.py (需 zig)。
-入口: DxHost(pid) -> attach/ping/hook_gl/capture/bye。
+入口: DxHost(pid) -> bind/ping/hook_gl/capture/unbind。
 """
 from .host import CMD_HOOK_GL, DxHost, target_bitness
 

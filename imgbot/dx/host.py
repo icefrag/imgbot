@@ -2,7 +2,7 @@
 """dx 注入通道宿主侧: 建共享内存 -> 注入 dmcore -> 心跳/命令 -> 取帧.
 
 协议(与 dx/native/dmcore.c 同步改):
-- 共享内存 "Local\\imgbotdx_{pid}", 32MB; 头 12 个 DWORD(48B), 帧区偏移 4096。
+- 共享内存 "Local\\imgbotdx_{pid}", 32MB; 头 30 个 DWORD(120B), 帧区偏移 4096。
 - 纯轮询: 宿主写 cmd+cmd_seq, DLL 执行后写 ack_result+ack_seq; 心跳=heartbeat
   计数持续增长; 帧=frame_seq 递增(BGRA/RGB8, 行序自底向上, 取出时翻正)。
 命令: PING=1 BYE=2 HOOK_GL=3 BIND=4 KEY=5 MOUSE=6 RAWINFO=7 FAKE_ACTIVE=8
@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 
 import numpy as np
+
+from ..win32.window import WindowLostError
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
@@ -73,7 +75,7 @@ def target_bitness(pid: int) -> str:
 
 
 class DxHost:
-    """一个目标进程一个实例: attach() 起全程, bye() 收口。"""
+    """一个目标进程一个实例: bind() 起全程, unbind() 收口。"""
 
     def __init__(self, pid: int):
         self.pid = pid
@@ -100,16 +102,24 @@ class DxHost:
             raise OSError(f"MapViewOfFile 失败: {ctypes.get_last_error()}")
         struct.pack_into("<30I", (ctypes.c_char * SHM_SIZE).from_address(self._view),
                          0, MAGIC, 6, *([0] * 28))
-        r = subprocess.run([str(self._injector), str(self.pid), str(self._dll)],
-                           capture_output=True, text=True, timeout=30)
-        out = r.stdout.strip()
-        if not out.startswith("OK"):
-            raise RuntimeError(f"注入失败: {out} {r.stderr.strip()}")
-        rc = int(out.split("rc=")[1])
-        if rc != 0:
-            raise RuntimeError(
-                f"DxInit 返回 {rc}(5=线程/互斥体失败 6=旧实例未退干净, 重启目标进程可解)")
-        self._wait(lambda: self.hdr[3] > 0, timeout, "心跳未出现(注入后 DLL 未挂上共享内存)")
+        try:
+            r = subprocess.run([str(self._injector), str(self.pid), str(self._dll)],
+                               capture_output=True, text=True, timeout=30)
+            out = r.stdout.strip()
+            if not out.startswith("OK"):
+                raise RuntimeError(f"注入失败: {out} {r.stderr.strip()}")
+            rc = int(out.split("rc=")[1])
+            if rc != 0:
+                raise RuntimeError(
+                    f"DxInit 返回 {rc}(5=线程/互斥体失败 6=旧实例未退干净, 重启目标进程可解)")
+            self._wait(lambda: self.hdr[3] > 0, timeout,
+                       "心跳未出现(注入后 DLL 未挂上共享内存)")
+        except Exception:
+            k32.UnmapViewOfFile(self._view)
+            k32.CloseHandle(self._map)
+            self._view = None
+            self._map = None
+            raise
 
     def _bye_stale_worker(self):
         """若旧驻留实例还在(上次会话没收口), 命令它解钩退出, 让位给新注入。"""
@@ -158,7 +168,7 @@ class DxHost:
     # -- 观测与命令 ----------------------------------------------------
     @property
     def hdr(self):
-        """头 18 个 DWORD 活视图: [magic,ver,state,heart, cmd,seq,ack,res,
+        """头 19 个 DWORD 活视图: [magic,ver,state,heart, cmd,seq,ack,res,
         fseq,w,h,fmt, swap_calls,gl_err,vp_w,vp_h, arg0,arg1, msg_filtered]"""
         if self._view is None:
             raise RuntimeError("未 attach")
@@ -167,6 +177,8 @@ class DxHost:
 
     def _cmd(self, cmd: int, arg0: int = 0, arg1: int = 0,
              timeout: float = 3.0) -> int:
+        if self._view is None:
+            raise RuntimeError("未 attach")
         base = (ctypes.c_char * 120).from_address(self._view)
         cur = struct.unpack("<30I", bytes(base))
         seq = cur[5]
@@ -234,7 +246,7 @@ class DxHost:
     def fake_active(self, enable: bool = True) -> int:
         """假激活: 子类化绑定窗口, 吞失焦/失活族消息并合成一次激活(大漠 EnableFakeActive)。"""
         rc = self._cmd(CMD_FAKE_ACTIVE, 1 if enable else 0)
-        if enable and rc != 1:
+        if enable and rc not in (0, 1):    # 1=本次新开, 0=已开启(幂等)
             raise RuntimeError(f"假激活失败 rc={rc}(40=未BIND/窗口失效, 其他=SetWindowLongPtr 错误码)")
         return rc
 
@@ -269,8 +281,11 @@ class DxHost:
 
     @staticmethod
     def _check(rc: int, cmd: int):
+        if rc == 40:
+            # 键鼠命令的"窗口无效/未BIND"归一化: 消费方按 WindowLostError 重绑
+            raise WindowLostError(f"命令 {cmd} 失败 rc=40(未BIND或目标窗口已失效), 需重新绑定")
         if rc != 0:
-            raise RuntimeError(f"命令 {cmd} 失败 rc={rc}(40=未BIND或窗口失效)")
+            raise RuntimeError(f"命令 {cmd} 失败 rc={rc}")
 
     def frame_info(self) -> tuple[int, int, int, int]:
         """(frame_seq, w, h, fmt); frame_seq 不再增长=渲染停了。"""
@@ -293,13 +308,19 @@ class DxHost:
         if not w or not h:
             raise RuntimeError("尚无帧(渲染没跑或钩子未挂)")
         n = 4 if fmt == 1 else 3
-        buf = (ctypes.c_char * (w * h * n)).from_address(self._view + FRAME_OFF)
-        img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, n)
-        img = img[::-1]                                   # GL 行序自底向上, 翻正
-        img = img[:, :, :3]
-        if fmt == 2:                                      # GL_RGB: 通道序反成 BGR
-            img = img[:, :, ::-1]
-        return np.ascontiguousarray(img)
+        for _ in range(3):                          # 拷后复核 seq, 防单槽撕裂
+            buf = (ctypes.c_char * (w * h * n)).from_address(self._view + FRAME_OFF)
+            img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, n)
+            img = img[::-1]                                   # GL 行序自底向上, 翻正
+            img = img[:, :, :3]
+            if fmt == 2:                                      # GL_RGB: 通道序反成 BGR
+                img = img[:, :, ::-1]
+            img = np.ascontiguousarray(img)
+            if self.frame_info()[0] == seq:                   # 拷贝期间无新帧落地
+                return img
+            seq, w, h, fmt = self.frame_info()                # 有新帧, 按新头重拷
+            n = 4 if fmt == 1 else 3
+        return img                                             # 高刷下三次未稳, 取最后拷贝
 
     # -- 内部 ----------------------------------------------------------
     def _wait(self, cond, timeout: float, what: str):
