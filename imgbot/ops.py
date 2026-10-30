@@ -123,6 +123,15 @@ class Ops:
             lambda: self._find_fresh(pic, region, threshold) is None,
             timeout, interval, stop)
 
+    def find_color(self, color: str, region=None, tol: int = 0) -> list[tuple[int, int]]:
+        """区域找全部色块坐标(大漠 FindColorEx 对应物, 单帧)。
+
+        color="RRGGBB" 或 "RRGGBB-DRDGDB"(偏差并入 tol); 冻结窗内用冻结帧。
+        """
+        (b, g, r), t = _bgr(color)
+        return vision.find_color(self._frame(), [(b, g, r)], tol=tol + t,
+                                 region=region)
+
     def wait_color(self, color: str, region=None, timeout: float = 30,
                    interval: float = 0.4, stop=None):
         """等某色出现(色比图快, 转圈/倒计时专用), 返回 (x, y) 或 None。"""

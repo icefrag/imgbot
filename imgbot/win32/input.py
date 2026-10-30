@@ -242,21 +242,28 @@ class SendInputMouseKeyboard:
 
     def _ensure_fg(self):
         """目标必须真前台(SendInput 打的是全局输入流)。
+        对比/激活一律用 GA_ROOT 根窗: 绑定目标是子窗口(如 Edit)时,
+        GetForegroundWindow 返回的是主窗, 拿子窗比永远"不相等"(实测坑)。
         先直呼 SetForegroundWindow(调用方是前台进程时即可成); 被前台锁定
         拒绝时 AttachThreadInput 挂目标输入队列再激活。不用 ALT 戳法 ——
         ALT 抬起会激活目标菜单栏, 后续按键全进菜单(实测坑)。"""
-        hwnd = self.window.hwnd
-        if _u32.GetForegroundWindow() == hwnd:
+        root = _u32.GetAncestor(self.window.hwnd, 2) or self.window.hwnd   # GA_ROOT
+        if _u32.GetForegroundWindow() == root:
             return
-        _u32.SetForegroundWindow(hwnd)
-        if _u32.GetForegroundWindow() == hwnd:
+        _u32.SetForegroundWindow(root)
+        if _u32.GetForegroundWindow() == root:
             time.sleep(0.1)
             return
         ours = _k32.GetCurrentThreadId()
-        tgt = _u32.GetWindowThreadProcessId(hwnd, None)
+        tgt = _u32.GetWindowThreadProcessId(root, None)
         if _u32.AttachThreadInput(ours, tgt, True):
-            _u32.SetForegroundWindow(hwnd)
+            _u32.SetForegroundWindow(root)
             _u32.AttachThreadInput(ours, tgt, False)
+        if _u32.GetForegroundWindow() == root:
+            time.sleep(0.15)
+            return
+        # 终极兜底: SwitchToThisWindow(无 ALT 菜单副作用; 前台锁最顽固时可用)
+        _u32.SwitchToThisWindow(root, True)
         time.sleep(0.15)
 
     def _to_screen(self, x, y):
