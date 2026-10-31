@@ -4,7 +4,10 @@
 - 鼠标: WM_MOUSEMOVE / WM_LBUTTONDOWN(MK_LBUTTON) / WM_LBUTTONUP, 坐标进 lParam;
   点击前走贝塞尔拟人轨迹(先快后慢 + 随机弯度), 不瞬移;
 - 中文: WM_CHAR 逐码元(UTF-16, 代理对自动拆分) 或 send_paste 剪贴板粘贴;
-- 后台键盘(ESC 等)实测无效 → 关闭/取消类操作一律用点击, 不提供 key_tap;
+- 键盘: WM_KEYDOWN/WM_KEYUP 带扫描码+状态位的 key_tap(旧"后台键盘实测无效"结论
+  系误传: 当年从未发过按键消息, 只有 type_text 的 WM_CHAR)。原理边界: 消息只达
+  "从消息循环读键"的窗口过程; 轮询型游戏(GetAsyncKeyState/DirectInput/RawInput)
+  天然免疫(= 大漠键盘死案本尊), 那种目标换 dx 通道(进程内合成 + hook_keystate);
 - 前台键鼠 = SendInputMouseKeyboard(SendInput 真事件, DmSoft "normal" 通道)。
 """
 import ctypes
@@ -19,6 +22,8 @@ WM_MOUSEMOVE = 0x200
 WM_LBUTTONDOWN = 0x201
 WM_LBUTTONUP = 0x202
 WM_LBUTTONDBLCLK = 0x203
+WM_KEYDOWN = 0x100
+WM_KEYUP = 0x101
 WM_CHAR = 0x102
 WM_PASTE = 0x302
 
@@ -141,6 +146,39 @@ class MouseKeyboard:
         time.sleep(self.delay)
         self.window.post_message(WM_LBUTTONUP, 0, _lp(x, y))
         self._pos = (x, y)
+
+    # -- 键盘(消息按键): 大漠 windows 通道语义; 原理边界见模块头 --
+    def _key_lparam(self, vk, up):
+        """WM_KEYDOWN/KEYUP 的 lParam: repeat=1 | 扫描码<<16; KEYUP 加前态(bit30)+
+        转换(bit31); 扩展键置 bit24 —— 与 SendInput 侧 _EXTENDED_VKS 同表, 通道一致。"""
+        scan = _u32.MapVirtualKeyW(vk, 0)
+        if not scan:
+            raise ValueError(f"VK 0x{vk:X} 无扫描码(键盘布局不认识)")
+        lp = 1 | (scan << 16)
+        if vk in _EXTENDED_VKS:
+            lp |= 1 << 24
+        if up:
+            lp |= (1 << 30) | (1 << 31)
+        return lp
+
+    def key_down(self, vk):
+        """按下不抬。L/R 修饰键先归一成通用 VK(与 SendInput 通道一致)。"""
+        self._ensure_alive()
+        vk = _GENERIC_VK.get(vk, vk)
+        self.window.post_message(WM_KEYDOWN, vk, self._key_lparam(vk, up=False))
+
+    def key_up(self, vk):
+        """抬起(L/R 归一同 key_down)。"""
+        self._ensure_alive()
+        vk = _GENERIC_VK.get(vk, vk)
+        self.window.post_message(WM_KEYUP, vk, self._key_lparam(vk, up=True))
+
+    def key_tap(self, vk):
+        """后台按键: down → 拟人间隔 → up。只达从消息循环读键的目标; 游戏若走
+        GetAsyncKeyState/DirectInput 轮询硬件态, 消息到不了 → 换 dx 通道。"""
+        self.key_down(vk)
+        time.sleep(self.delay)
+        self.key_up(vk)
 
     def type_text(self, text, per_char_delay=0.03):
         """逐码元发送 WM_CHAR(UTF-16 码元, 代理对自动拆分)。"""

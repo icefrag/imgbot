@@ -50,7 +50,8 @@ t.tap(*hit[:2])
 - `AdbTarget` 另有: `serial`(属性)、`save_screenshot(path)`、`swipe(...)`、`keyevent(code)`、
   `shell(*args)`、`type_text(text)`、`start_app(pkg, act)`、`stop_app(pkg)`。
 - `Win32Target` 另有: `double_click(x, y)`、`hover(x, y, duration=1.5)`、`type_text(text)`、
-  `paste(text)`、`swipe(...)`(未实现, 会抛)、`keyevent(code)`(**后台键盘实测无效, 会抛**)。
+  `paste(text)`、`swipe(...)`(未实现, 会抛)、`keyevent(code)`(windows 通道 = 带扫描码
+  消息键, 只达从消息循环读键的目标; 轮询型游戏免疫 → 用 `input="dx"`)。
 
 ### `imgbot/vision.py` —— 图色层(吃 BGR ndarray, 与后端无关)
 
@@ -209,7 +210,8 @@ t.tap(*hit[:2])
 `capture.CaptureError`(截图失败: 窗口无效/客户区为 0)。
 
 PC 侧坑(实机结论): 目标以管理员运行时本进程必须同级(否则 PostMessage err=5 且截图全黑);
-后台键盘(WM_KEYDOWN)实测无效, 关闭/取消一律用点击; 真最小化不可截。
+后台键盘 = 带扫描码消息键, 只达从消息循环读键的目标, 轮询型游戏(GetAsyncKeyState/
+DirectInput)免疫(换 dx 通道); 真最小化不可截。
 
 ### 常见坑速查
 

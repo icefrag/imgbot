@@ -22,9 +22,9 @@ from . import ime, nav as nav_mod, vision
 from .ocr import best_match
 from .readout import enlarge, read_digits
 from .win32.capture import capture_client, capture_screen, virtual_screen_rect
-from .win32.input import (CF_UNICODETEXT, WM_CHAR, WM_LBUTTONDOWN, WM_LBUTTONUP,
-                          WM_MOUSEMOVE, WM_PASTE, MouseKeyboard, human_path,
-                          send_paste)
+from .win32.input import (CF_UNICODETEXT, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
+                          WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PASTE,
+                          MouseKeyboard, human_path, send_paste)
 from .win32.window import GameWindow, list_windows, xor_frame
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -447,6 +447,14 @@ def main():
         pump()
         chars = [chr(w) for m, w, _l in records if m == WM_CHAR]
         assert chars == list("魔A"), chars
+        records.clear()
+        mk.key_tap(0x0D)                       # VK_RETURN: 主键盘回车, 非扩展键
+        pump()
+        keys = [(m, w, l) for m, w, l in records if m in (WM_KEYDOWN, WM_KEYUP)]
+        assert [m for m, _w, _l in keys] == [WM_KEYDOWN, WM_KEYUP], keys
+        scan = _user32.MapVirtualKeyW(0x0D, 0)  # 扫描码按真机布局查, 断言不写死
+        assert keys[0][1] == 0x0D and keys[0][2] == 1 | (scan << 16), (hex(keys[0][2]),)
+        assert keys[1][2] == 1 | (scan << 16) | (1 << 30) | (1 << 31), (hex(keys[1][2]),)
     finally:
         _user32.DestroyWindow(hwnd)
 

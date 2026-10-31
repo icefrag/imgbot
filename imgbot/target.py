@@ -116,15 +116,15 @@ class Win32Target(Target):
             raise NotImplementedError("postmessage 通道拖拽未实现, 用 input='dx'")
 
     def keyevent(self, code: int):
-        """按键(统一入口)。dx 通道可用; postmessage 通道键盘是历史死案, 不提供。"""
+        """按键(统一入口)。windows/dx/normal 通道均可; 消息按键只达读消息的窗口过程。"""
         self.key_tap(code)
 
     def key_tap(self, vk: int):
-        """后台按键(dx 通道); postmessage 通道键盘是历史死案, 不提供。"""
+        """后台按键。windows 通道 = 带扫描码的消息键(轮询型游戏免疫, 那种用 dx)。"""
         if hasattr(self.mk, "key_tap"):
             self.mk.key_tap(vk)
         else:
-            raise NotImplementedError("postmessage 通道键盘实测无效, 用 input='dx' 或点击")
+            raise NotImplementedError("当前键鼠通道无 key_tap")
 
     def double_click(self, x: int, y: int):
         self.mk.double_click(x, y)

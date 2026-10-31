@@ -442,27 +442,17 @@ class DmSoft:
             self._win.post_message(msg, wp, (y & 0xFFFF) << 16 | (x & 0xFFFF))
 
     def KeyPress(self, vk):
-        if self._dxmk is not None:
-            self._dxmk.key_tap(vk)
-        elif self._mk is not None and hasattr(self._mk, "key_tap"):
-            self._mk.key_tap(vk)
-        else:
-            raise NotImplementedError("windows 通道键盘历史死案, 用 keypad='dx'/'normal'")
+        """按键。windows 通道 = 带扫描码的消息按键(只达读消息的窗口过程, 轮询型
+        游戏免疫); 轮询型/需真实键态的目标用 keypad='dx'(hook_keystate)。"""
+        self._mk_().key_tap(vk)
         return 1
 
-    def _need_dxmk(self):
-        if self._dxmk is None:
-            raise RuntimeError(
-                "该接口需要 dx 键鼠通道(BindWindow mouse/keypad 含 'dx')")
-
     def KeyDown(self, vk):
-        self._need_dxmk()
-        self._dxmk.key_down(vk)
+        self._mk_().key_down(vk)
         return 1
 
     def KeyUp(self, vk):
-        self._need_dxmk()
-        self._dxmk.key_up(vk)
+        self._mk_().key_up(vk)
         return 1
 
     def KeyPressChar(self, key_str: str):

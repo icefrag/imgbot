@@ -103,7 +103,11 @@
 - **真最小化不可截**: 最小化时目标自停笔, capture_client 会自动 SW_RESTORE 重试。
 - **完全离屏触发 DXGI 遮挡节流**: 截图变暗冻结, 在假数据上跑脚本 → 用
   `park_offscreen` 细缝停靠(留 2×30px 在屏内), 别把窗口挪出显示器。
-- **后台键盘(WM_KEYDOWN)实测无效**: 关闭/取消一律用点击; 中文输入走
+- **后台键盘(windows 通道)**: 旧"WM_KEYDOWN 实测无效"结论系误传(当年从未实现过,
+  只发过 WM_CHAR 打字)——带扫描码+状态位的 `key_tap` 已补(2026-10-31, selfcheck
+  消息级验收)。消息只达"从消息循环读键"的窗口过程; 轮询型游戏免疫(见下条)。
+  真机烟测 scripts/win_key_smoke.py(⚠ 目标提权时本进程必须同级, UipiError=权限墙
+  不是"游戏无视")。游戏内实测结论待记: 华夏免费版=pending。中文输入仍走
   `type_text`(WM_CHAR)或 `paste`(剪贴板)。→ dx 通道(`input="dx"`)已可用:
   消息在目标进程内按大漠配方合成(焦点路由/手动 TranslateMessage/RIT 同步,
   2026-10-29 反编译 7.2319 组件对齐), 记事本 WM_GETTEXT 硬验收通过。
