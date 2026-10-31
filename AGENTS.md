@@ -117,19 +117,27 @@
   user32!GetKeyState/GetAsyncKeyState 喂虚拟按住态(大漠同机制, x86 专用),
   验收 scripts/dx_keystate_smoke.py; DirectInput 游戏还需 dinput8!GetDeviceState
   钩子(留位未实现)。
-- **"鼠标能移动不能点击"= 游戏点击处理里读 GetCursorPos**(大漠 windows2 模式
-  存在的理由): 消息坐标与真实光标对不上 → 游戏忽略点击。解法 = 潜影
+- **"鼠标能移动不能点击"类目标**(大漠 windows2 模式的靶子): 通用解 = 潜影
   `DxHost.mouse_lock()`(CMD_MOUSE_LOCK, 协议 v7): 钩 user32!GetCursorPos 返回
   虚拟光标(大漠 dx.mouse.position.lock.api 同款); DmSoft 层 `mouse="windows2"`
-  一键启用(dx 消息鼠标+光标锁)。华夏免费版真机验收=pending(p9 job 排队中,
-  .elework/p9.result.json 见分晓)。
-- **华夏免费版私服(复古无锻造)三重墙实测(2026-10-31)**: ①客户端 32 位
-  (*GodClass*, GDI 图色 OK); ②登录器 `*[盾].exe` 给 game.exe 挂进程 DACL
-  (拒 VM_READ/VM_OPERATION/CREATE_THREAD)——**OWNER 保留 WRITE_DAC, 以所有者
-  身份 SetSecurityInfo 改成 Everyone 全权即解封**(实测无看门狗回滚; 提权侧
-  操作, 脚本参考 .elework/p6); ③提权运行(HIGH IL), 普通权限宿主连
-  PostMessage(WM_KEYDOWN)/PrintWindow/屏幕裁剪区 Z 序操作全被 UIPI 拒 err5
-  (WM_NULL 等白名单消息除外)——宿主必须提权跑, 别浪费普通权限侧的尝试。
+  一键启用(dx 消息鼠标+光标锁)。华夏登录界面实测: **纯消息点击即中, 锁用不上**
+  (7 种消息配方+dx 四组合全 17k 像素级命中); 世界画面(在线态)是否需要锁 =
+  p9 实例1 实测待收(.elework/p9.result.json)。
+- **判读尺陷阱(实测踩过)**: 自动判"点击有没有反应"别用全帧均值 diff ——
+  大静态背景会把局部大变化稀释到 2-3(华夏软键盘面板开合 17k 像素, 均值才 2.9,
+  一度全军误判"点击无效")。用**变化像素计数**(灰差>30 的像素数), 局部 UI 变化
+  阈值 ~3000px; 双击 toggle 类动作会开+关抵消归零, 换单击验证。
+- **华夏免费版私服(复古无锻造)四重墙实测(2026-10-31)**: ①客户端 32 位
+  (*GodClass*, GDI 图色 OK); ②game.exe **自带进程护甲**(与[盾]登录器无关):
+  DACL 拒 VM_READ/VM_OPERATION/CREATE_THREAD 但放行 0x400, 且**看门狗周期回挂**
+  (解封后 ~35s 内被重新挂上)——OWNER WRITE_DAC 改写成 Everyone 全权可解, 但要
+  **解封后立刻注入**(injector 已兼容); ③**模块隐藏**: LoadLibrary 明明成功
+  (退出码=HMODULE)但模块枚举看不见 → 注入器 x86 用退出码当远程基址兜底;
+  ④提权运行(HIGH IL, [盾]所赐), 普通权限宿主 PostMessage(WM_KEYDOWN)/
+  PrintWindow/SetWindowPos 全被 UIPI 拒 err5 —— 宿主必须提权跑。
+  **干净靶技巧**: 直启第二实例 `game.exe OABWLV`(抄登录器令牌, 普通权限) =
+  中等 IL 无墙靶(消息/截图/注入全通, 适合做配方实验室); 千万别点登录界面
+  「进入游戏」(记住的账号会把你在线实例顶下线)。
 - **大漠键鼠反编译对照结论(2026-10-29, dm.dll 7.2642+组件 7.2319)**:
   GetCursorPos=虚拟光标客户区坐标(已对齐, 真人动鼠标不影响读数);
   KeyPress 修饰键 L/R→通用 VK 归一化+虚拟 Alt 追踪(后续键转 SYSKEY, 已对齐

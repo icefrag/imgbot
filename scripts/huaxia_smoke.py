@@ -50,9 +50,14 @@ def unlock_dacl(pid: int) -> None:
     print(f"  DACL 解封 rc={rc}(0=成功)")
 
 
+def px_changed(a, b):
+    """判读尺 = 变化像素数(>30 灰差), 不用均值 —— 大静态背景会把均值稀释到
+    2-3, 局部大变化(面板开合 17k px)会被误判为无反应(华夏实测踩过)。"""
+    return int((np.abs(b - a).max(axis=2) > 30).sum())
+
+
 def diff3(a, b, c):
-    return [round(float(np.abs(x - y).mean()), 2)
-            for x, y in ((b, a), (c, b), (c, a))]
+    return [px_changed(x, y) for x, y in ((a, b), (b, c), (a, c))]
 
 
 def main() -> int:
@@ -81,14 +86,14 @@ def main() -> int:
         # 静息噪声
         time.sleep(1.0)
         na = cap(); time.sleep(1.0); nb = cap()
-        noise = float(np.abs(nb - na).mean())
-        print(f"静息噪声基线 diff={noise:.2f}")
+        noise = px_changed(na, nb)
+        print(f"静息噪声基线 变化像素={noise}")
 
         # 1) 键盘: W 开技能窗(用户口径)
         a = cap(); dm.KeyPress(VK_W); time.sleep(1.2); b = cap()
-        kw = float(np.abs(b - a).mean())
-        print(f"W 键 diff={kw:.2f} → {'✅ 技能窗开了' if kw > max(noise * 4, 8) else '❌ 无反应'}")
-        if kw > 8:                        # 关回去
+        kw = px_changed(a, b)
+        print(f"W 键 变化像素={kw} → {'✅ 技能窗开了' if kw > 3000 else '❌ 无反应'}")
+        if kw > 3000:                     # 关回去
             dm.KeyPress(VK_W); time.sleep(0.8)
         cv2.imwrite(r"logs\huaxia_w.png", b.astype(np.uint8))
 
@@ -100,11 +105,11 @@ def main() -> int:
         time.sleep(1.2); b = cap()
         time.sleep(1.5); c = cap()
         d = diff3(a, b, c)
-        walked = d[1] > max(noise * 4, 8) and d[2] > max(noise * 4, 8)
-        print(f"地面点击 diff(即时/持续/持久)={d} → "
+        walked = d[1] > 3000 and d[2] > 3000      # 持续+持久双大 = 画面在滚动(走路)
+        print(f"地面点击 变化像素(即时/持续/持久)={d} → "
               f"{'✅ 人物走了' if walked else '❌ 点击无效'}")
         cv2.imwrite(r"logs\huaxia_walk.png", c.astype(np.uint8))
-        ok = kw > 8 and walked
+        ok = kw > 3000 and walked
         print("=" * 40)
         print("验收结论:", "✅ 全通" if ok else "❌ 未通 — 截图在 logs/, 按 AGENTS.md 决策树换配方")
         return 0 if ok else 2
