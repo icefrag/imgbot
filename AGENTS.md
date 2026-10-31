@@ -117,12 +117,13 @@
   user32!GetKeyState/GetAsyncKeyState 喂虚拟按住态(大漠同机制, x86 专用),
   验收 scripts/dx_keystate_smoke.py; DirectInput 游戏还需 dinput8!GetDeviceState
   钩子(留位未实现)。
-- **"鼠标能移动不能点击"类目标**(大漠 windows2 模式的靶子): 通用解 = 潜影
-  `DxHost.mouse_lock()`(CMD_MOUSE_LOCK, 协议 v7): 钩 user32!GetCursorPos 返回
-  虚拟光标(大漠 dx.mouse.position.lock.api 同款); DmSoft 层 `mouse="windows2"`
-  一键启用(dx 消息鼠标+光标锁)。华夏登录界面实测: **纯消息点击即中, 锁用不上**
-  (7 种消息配方+dx 四组合全 17k 像素级命中); 世界画面(在线态)是否需要锁 =
-  p9 实例1 实测待收(.elework/p9.result.json)。
+- **"鼠标能移动不能点击"= 点击处理有窗口激活门槛**(华夏世界画面定论, 2026-11-01):
+  游戏非激活时忽略全部点击消息, 移动(hover)与键盘热键不受门槛 —— 所以"能移动、
+  键盘好使、就是不能点"。**最小解 = `mouse="dx"` + `dm.EnableFakeActive(1)`**
+  (假激活让游戏自认激活; 实测 8/8 走路, 光标锁/键态钩都不需要)。通用备胎仍留:
+  `DxHost.mouse_lock()`(CMD_MOUSE_LOCK, 协议 v7, 钩 GetCursorPos 喂虚拟光标,
+  大漠 dx.mouse.position.lock.api 同款)与 `DmSoft mouse="windows2"` —— 治的是
+  另一种病(点击处理读真实光标坐标的), 华夏不是这种, 别个游戏可能用上。
 - **判读尺陷阱(实测踩过)**: 自动判"点击有没有反应"别用全帧均值 diff ——
   大静态背景会把局部大变化稀释到 2-3(华夏软键盘面板开合 17k 像素, 均值才 2.9,
   一度全军误判"点击无效")。用**变化像素计数**(灰差>30 的像素数), 局部 UI 变化
@@ -138,6 +139,10 @@
   **干净靶技巧**: 直启第二实例 `game.exe OABWLV`(抄登录器令牌, 普通权限) =
   中等 IL 无墙靶(消息/截图/注入全通, 适合做配方实验室); 千万别点登录界面
   「进入游戏」(记住的账号会把你在线实例顶下线)。
+  **终验(2026-11-01, 世界画面在线实例)**: 键盘 windows 通道✅(W 13.1w 像素),
+  鼠标 `mouse="dx"`+`EnableFakeActive(1)`✅(地面点击走路 24.4w 像素, DmSoft
+  用户面 API 直测); 移动类操作点击前游戏必须在"自认激活"态, 否则全静默丢弃。
+  验收脚本 scripts/huaxia_smoke.py(管理员终端 `uv run scripts/huaxia_smoke.py`)。
 - **大漠键鼠反编译对照结论(2026-10-29, dm.dll 7.2642+组件 7.2319)**:
   GetCursorPos=虚拟光标客户区坐标(已对齐, 真人动鼠标不影响读数);
   KeyPress 修饰键 L/R→通用 VK 归一化+虚拟 Alt 追踪(后续键转 SYSKEY, 已对齐

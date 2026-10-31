@@ -5,8 +5,8 @@
 1. [盾]登录器给 game.exe 挂进程 DACL 拒注入权 → OWNER WRITE_DAC 改写成 Everyone
    全权解封(本脚本自动做, 幂等);
 2. 游戏提权运行(HIGH IL) → 本脚本必须提权跑(普通权限 PostMessage 全 err5);
-3. "鼠标能移动不能点击" → 游戏点击处理读 GetCursorPos → DmSoft mouse="windows2"
-   (潜影 dx 消息鼠标 + GetCursorPos 虚拟光标锁, 大漠 windows2 同款).
+3. "鼠标能移动不能点击" → 根因=点击处理有窗口激活门槛 → mouse="dx" +
+   dm.EnableFakeActive(1) 假激活(2026-11-01 世界画面实测 8/8 走路; 光标锁/键态钩均不需要).
 
 验收判读全自动: 前后截图 diff(W 键=技能窗开, 大 diff; 地面点击=人物走路,
 持续 diff)。用法: 管理员终端 uv run scripts/huaxia_smoke.py
@@ -61,6 +61,7 @@ def diff3(a, b, c):
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # GBK 控制台跑 emoji 不炸
     if not ctypes.WinDLL("shell32").IsUserAnAdmin():
         print("⚠ 必须管理员运行(游戏 HIGH IL, 普通权限消息全被 UIPI 拒)")
         return 1
@@ -76,8 +77,9 @@ def main() -> int:
     unlock_dacl(win.pid())
 
     dm = DmSoft()
-    dm.BindWindow(win.hwnd, "gdi", "windows2", "windows", 0)
-    print("绑定: display=gdi mouse=windows2(光标锁) keypad=windows")
+    dm.BindWindow(win.hwnd, "gdi", "dx", "windows", 0)
+    dm.EnableFakeActive(1)          # 华夏定论配方: dx 消息鼠标+假激活(2026-11-01 实测)
+    print("绑定: display=gdi mouse=dx keypad=windows + EnableFakeActive")
 
     def cap():
         return capture_client(win).astype(int)
@@ -105,7 +107,7 @@ def main() -> int:
         time.sleep(1.2); b = cap()
         time.sleep(1.5); c = cap()
         d = diff3(a, b, c)
-        walked = d[1] > 3000 and d[2] > 3000      # 持续+持久双大 = 画面在滚动(走路)
+        walked = d[0] > 20000 or d[2] > 20000     # 瞬时/持久任一大 = 镜头位移(到得早就无持续变化)
         print(f"地面点击 变化像素(即时/持续/持久)={d} → "
               f"{'✅ 人物走了' if walked else '❌ 点击无效'}")
         cv2.imwrite(r"logs\huaxia_walk.png", c.astype(np.uint8))

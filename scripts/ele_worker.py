@@ -35,7 +35,8 @@ def main():
             out = claim.with_suffix(".out")
             print(f"跑 {claim.name}", flush=True)
             r = subprocess.run([sys.executable, str(claim)], cwd=str(WORK.parent),
-                               capture_output=True, text=True, errors="replace",
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace",
                                timeout=600)
             out.write_text(f"--- exit={r.returncode} ---\n"
                            f"{r.stdout}\n{r.stderr}", encoding="utf-8")
