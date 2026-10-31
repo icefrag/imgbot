@@ -9,6 +9,8 @@
  * 焦点路由 GetGUIThreadInfo, RIT 同步 0xFF/魔数, 手动 TranslateMessage 补 WM_CHAR)。
  * 键态: CMD_KEYSTATE 钩 user32!GetKeyState/GetAsyncKeyState(虚拟状态喂给
  * 轮询型输入游戏 —— 大漠键盘死案解法, 2026-10-29 反编译 7.2319 组件确认)。
+ * 光标: CMD_MOUSE_LOCK 钩 user32!GetCursorPos 返回虚拟光标(大漠
+ * dx.mouse.position.lock.api —— "能移动不能点击"的游戏在点击里读真光标)。
  * 协议/布局见 host.py 头注释, 两端必须同步改。
  */
 #include <windows.h>
@@ -28,6 +30,7 @@
 #define CMD_HIDE     9   /* 从 PEB 模块链摘除本 DLL(大漠 dx.public.hide.dll 简版) */
 #define CMD_HOOK_D3D9 10 /* d3d9 vtable 钩子(时机: 目标须在挂好后再调 Direct3DCreate9) */
 #define CMD_KEYSTATE 11  /* 钩 user32!GetKeyState/GetAsyncKeyState(x86 热补丁) */
+#define CMD_MOUSE_LOCK 12 /* 钩 user32!GetCursorPos 返回虚拟光标(大漠 dx.mouse.position.lock.api) */
 
 #define KEY_DOWN 0
 #define KEY_UP   1
@@ -281,6 +284,51 @@ static void restore_hotpatch(BYTE *func, BYTE *orig5, BYTE *tramp)
     VirtualFree(tramp, 0, MEM_RELEASE);
 }
 
+/* ---- 虚拟光标钩(CMD_MOUSE_LOCK, 大漠 dx.mouse.position.lock.api): 游戏在
+ * ---- 点击处理里调 GetCursorPos 取"真实光标"位置(在别处) → 点击落空, 表现为
+ * ---- "能移动不能点击"。钩住后返回最近一次鼠标命令的虚拟位置(换算屏幕坐标)。
+ * ---- 虚拟位由 do_mouse 每次落命令时刷新; BIND 时初始化为客户区中心。 ---- */
+static volatile LONG g_mlock;                 /* 锁开关 */
+static volatile LONG g_vx, g_vy;              /* 虚拟光标(客户区坐标) */
+static BOOL (WINAPI *g_realGetCursorPos)(LPPOINT);
+static BYTE *g_gpFunc, *g_gpTramp;
+static BYTE  g_gpOrig[5];
+
+static BOOL WINAPI our_getcursorpos(LPPOINT pt)
+{
+    if (g_mlock && g_hwnd && IsWindow(g_hwnd)) {
+        POINT p = { (LONG)g_vx, (LONG)g_vy };
+        ClientToScreen(g_hwnd, &p);
+        if (pt) *pt = p;
+        return TRUE;
+    }
+    return g_realGetCursorPos(pt);
+}
+
+static int hook_mouse_lock(void)
+{
+    if (g_gpTramp) { g_mlock = 1; return 0; }        /* 已挂, 只开闸 */
+    HMODULE u = GetModuleHandleA("user32.dll");
+    if (!u) return 80;
+    BYTE *f = (BYTE *)GetProcAddress(u, "GetCursorPos");
+    if (!f) return 81;
+    int rc = hotpatch(f, (void *)our_getcursorpos, &g_gpTramp, g_gpOrig);
+    if (rc) { g_gpTramp = NULL; return 82 + (rc - 31); }
+    g_gpFunc = f;
+    g_realGetCursorPos = (BOOL (WINAPI *)(LPPOINT))g_gpTramp;
+    g_mlock = 1;
+    return 0;
+}
+
+static void unhook_mouse_lock(void)
+{
+    g_mlock = 0;
+    if (!g_gpTramp) return;
+    restore_hotpatch(g_gpFunc, g_gpOrig, g_gpTramp);
+    g_gpFunc = NULL; g_gpTramp = NULL;
+    g_realGetCursorPos = NULL;
+}
+
 static int hook_keystate(void)
 {
     if (g_ksTramp[0]) return 0;                       /* 已挂 */
@@ -436,6 +484,7 @@ static int do_mouse(DWORD arg0, DWORD op)
 {
     if (!g_hwnd || !IsWindow(g_hwnd)) return 40;
     short x = (short)(arg0 & 0xFFFF), y = (short)(arg0 >> 16);
+    g_vx = x; g_vy = y;                        /* 虚拟光标随命令刷新(锁开着时喂钩子) */
     LPARAM xy = MAKELPARAM(x, y);
     POINT pt = { x, y };
     ClientToScreen(g_hwnd, &pt);
@@ -845,7 +894,7 @@ static DWORD WINAPI worker(LPVOID unused)
     if (!g_map) return 1;
     g_hdr = (Header *)MapViewOfFile(g_map, FILE_MAP_ALL_ACCESS, 0, 0, 0);
     if (!g_hdr) { CloseHandle(g_map); g_map = NULL; return 2; }
-    if (g_hdr->magic != SHM_MAGIC || g_hdr->version != 6) {
+    if (g_hdr->magic != SHM_MAGIC || g_hdr->version != 7) {
         UnmapViewOfFile(g_hdr); CloseHandle(g_map);
         g_hdr = NULL; g_map = NULL;
         if (g_mutex) { CloseHandle(g_mutex); g_mutex = NULL; }
@@ -861,17 +910,29 @@ static DWORD WINAPI worker(LPVOID unused)
             switch (g_hdr->cmd) {
             case CMD_PING:    r = 0x50494731u; break;
             case CMD_BYE:     unhook_gl(); unhook_d3d9(); unhook_keystate();
+                              unhook_mouse_lock();
                               fake_active(0);
                               g_hdr->state = 0; r = 0;
                               quit = TRUE; break;
             case CMD_HOOK_GL: r = (DWORD)hook_gl(); break;
             case CMD_HOOK_D3D9: r = (DWORD)hook_d3d9(); break;
             case CMD_KEYSTATE: r = (DWORD)hook_keystate(); break;
+            case CMD_MOUSE_LOCK:
+                              if (g_hdr->arg0) r = (DWORD)hook_mouse_lock();
+                              else { unhook_mouse_lock(); r = 0; }
+                              break;
             case CMD_FAKE_ACTIVE: r = (DWORD)fake_active((int)g_hdr->arg0); break;
             case CMD_HIDE:    r = (DWORD)hide_module(); break;
             case CMD_BIND:    g_hwnd = (HWND)(DWORD_PTR)g_hdr->arg0;
                               g_buttons = 0;
                               g_virtAlt = 0;
+                              {   /* 虚拟光标初始化为客户区中心(避免 0,0 起步) */
+                                  RECT rc;
+                                  if (GetClientRect(g_hwnd, &rc)) {
+                                      g_vx = (rc.right - rc.left) / 2;
+                                      g_vy = (rc.bottom - rc.top) / 2;
+                                  }
+                              }
                               g_ritHwnd = find_rit_hwnd();   /* RIT 同步目标缓存 */
                               r = IsWindow(g_hwnd) ? 1 : 0; break;
             case CMD_KEY:     r = (DWORD)do_key(g_hdr->arg0, g_hdr->arg1); break;

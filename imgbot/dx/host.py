@@ -6,7 +6,7 @@
 - 纯轮询: 宿主写 cmd+cmd_seq, DLL 执行后写 ack_result+ack_seq; 心跳=heartbeat
   计数持续增长; 帧=frame_seq 递增(BGRA/RGB8, 行序自底向上, 取出时翻正)。
 命令: PING=1 BYE=2 HOOK_GL=3 BIND=4 KEY=5 MOUSE=6 RAWINFO=7 FAKE_ACTIVE=8
-HIDE=9 HOOK_D3D9=10 KEYSTATE=11。版本号(第2 DWORD)改协议必须两端同步+1。
+HIDE=9 HOOK_D3D9=10 KEYSTATE=11 MOUSE_LOCK=12。版本号(第2 DWORD)改协议必须两端同步+1。
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ FILE_MAP_ALL_ACCESS = 0xF001F
 CMD_PING, CMD_BYE, CMD_HOOK_GL = 1, 2, 3
 CMD_BIND, CMD_KEY, CMD_MOUSE = 4, 5, 6
 CMD_RAWINFO, CMD_FAKE_ACTIVE, CMD_HIDE, CMD_HOOK_D3D9 = 7, 8, 9, 10
-CMD_KEYSTATE = 11
+CMD_KEYSTATE, CMD_MOUSE_LOCK = 11, 12
 KEY_DOWN, KEY_UP, KEY_CHAR = 0, 1, 2
 M_MOVE, M_LDOWN, M_LUP = 0, 1, 2
 M_RDOWN, M_RUP, M_MDOWN, M_MUP = 3, 4, 5, 6
@@ -46,6 +46,8 @@ HOOK_ERRORS = {
     70: "user32 未加载", 71: "GetKeyState 解析失败",
     72: "GetKeyState 无哨兵(x64)", 73: "蹦床分配失败", 74: "页保护失败",
     75: "GetAsyncKeyState 无哨兵(x64)", 76: "蹦床分配失败", 77: "页保护失败",
+    80: "user32 未加载", 81: "GetCursorPos 解析失败",
+    82: "GetCursorPos 无哨兵(x64)", 83: "蹦床分配失败", 84: "页保护失败",
 }
 
 k32.CreateFileMappingW.restype = ctypes.c_void_p
@@ -101,7 +103,7 @@ class DxHost:
         if not self._view:
             raise OSError(f"MapViewOfFile 失败: {ctypes.get_last_error()}")
         struct.pack_into("<30I", (ctypes.c_char * SHM_SIZE).from_address(self._view),
-                         0, MAGIC, 6, *([0] * 28))
+                         0, MAGIC, 7, *([0] * 28))
         try:
             r = subprocess.run([str(self._injector), str(self.pid), str(self._dll)],
                                capture_output=True, text=True, timeout=30)
@@ -214,6 +216,15 @@ class DxHost:
         rc = self._cmd(CMD_KEYSTATE)
         if rc != 0:
             raise RuntimeError(f"键态钩子失败 rc={rc}: {HOOK_ERRORS.get(rc, '未知')}")
+        return rc
+
+    def mouse_lock(self, enable: bool = True) -> int:
+        """虚拟光标钩子: user32!GetCursorPos 返回最近鼠标命令的位置(大漠
+        dx.mouse.position.lock.api)。"能移动不能点击"的游戏在点击处理里读
+        真实光标 → 坐标对不上 → 忽略点击; 锁住后读到的是虚拟点击位。仅 x86。"""
+        rc = self._cmd(CMD_MOUSE_LOCK, 1 if enable else 0)
+        if rc != 0:
+            raise RuntimeError(f"虚拟光标钩子失败 rc={rc}: {HOOK_ERRORS.get(rc, '未知')}")
         return rc
 
     def hook_auto(self) -> str:

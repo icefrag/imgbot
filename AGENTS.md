@@ -107,7 +107,8 @@
   只发过 WM_CHAR 打字)——带扫描码+状态位的 `key_tap` 已补(2026-10-31, selfcheck
   消息级验收)。消息只达"从消息循环读键"的窗口过程; 轮询型游戏免疫(见下条)。
   真机烟测 scripts/win_key_smoke.py(⚠ 目标提权时本进程必须同级, UipiError=权限墙
-  不是"游戏无视")。游戏内实测结论待记: 华夏免费版=pending。中文输入仍走
+  不是"游戏无视")。华夏免费版=✅(2026-10-31 提权侧 W 开技能窗, 前后截图 15w 像素
+  差验收; 普通权限被 UIPI 全拒, 见华夏条目)。中文输入仍走
   `type_text`(WM_CHAR)或 `paste`(剪贴板)。→ dx 通道(`input="dx"`)已可用:
   消息在目标进程内按大漠配方合成(焦点路由/手动 TranslateMessage/RIT 同步,
   2026-10-29 反编译 7.2319 组件对齐), 记事本 WM_GETTEXT 硬验收通过。
@@ -116,6 +117,19 @@
   user32!GetKeyState/GetAsyncKeyState 喂虚拟按住态(大漠同机制, x86 专用),
   验收 scripts/dx_keystate_smoke.py; DirectInput 游戏还需 dinput8!GetDeviceState
   钩子(留位未实现)。
+- **"鼠标能移动不能点击"= 游戏点击处理里读 GetCursorPos**(大漠 windows2 模式
+  存在的理由): 消息坐标与真实光标对不上 → 游戏忽略点击。解法 = 潜影
+  `DxHost.mouse_lock()`(CMD_MOUSE_LOCK, 协议 v7): 钩 user32!GetCursorPos 返回
+  虚拟光标(大漠 dx.mouse.position.lock.api 同款); DmSoft 层 `mouse="windows2"`
+  一键启用(dx 消息鼠标+光标锁)。华夏免费版真机验收=pending(p9 job 排队中,
+  .elework/p9.result.json 见分晓)。
+- **华夏免费版私服(复古无锻造)三重墙实测(2026-10-31)**: ①客户端 32 位
+  (*GodClass*, GDI 图色 OK); ②登录器 `*[盾].exe` 给 game.exe 挂进程 DACL
+  (拒 VM_READ/VM_OPERATION/CREATE_THREAD)——**OWNER 保留 WRITE_DAC, 以所有者
+  身份 SetSecurityInfo 改成 Everyone 全权即解封**(实测无看门狗回滚; 提权侧
+  操作, 脚本参考 .elework/p6); ③提权运行(HIGH IL), 普通权限宿主连
+  PostMessage(WM_KEYDOWN)/PrintWindow/屏幕裁剪区 Z 序操作全被 UIPI 拒 err5
+  (WM_NULL 等白名单消息除外)——宿主必须提权跑, 别浪费普通权限侧的尝试。
 - **大漠键鼠反编译对照结论(2026-10-29, dm.dll 7.2642+组件 7.2319)**:
   GetCursorPos=虚拟光标客户区坐标(已对齐, 真人动鼠标不影响读数);
   KeyPress 修饰键 L/R→通用 VK 归一化+虚拟 Alt 追踪(后续键转 SYSKEY, 已对齐

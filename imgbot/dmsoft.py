@@ -12,7 +12,8 @@
 通道词汇 = 大漠模式字符串(全表 docs/ref/damo-BindWindow*.txt):
 - display: "normal"(前台) / "gdi"/"gdi2"(PrintWindow 族) / "dx"*("dx","dx2",
   "dx.graphic.2d/3d/opengl" → 注入件; GL 已通, d3d9 在调试 → 明确报错)
-- mouse/keypad: "windows"* → PostMessage; "dx"* → 注入件; "normal" → SendInput
+- mouse/keypad: "windows"* → PostMessage; "windows2"* → 潜影 dx 消息鼠标 +
+  GetCursorPos 虚拟光标锁(治"能移动不能点击"); "dx"* → 注入件; "normal" → SendInput
   真事件(前台, 动真光标, 单开专用; 图色坐标仍统一客户区)
 颜色格式同大漠: "RRGGBB" 或 "RRGGBB-DRDGDB"(偏差), FindPic 的 delta_color 同。
 未实现的方法 raise NotImplementedError(带说明) —— 决策4: 明确错误优先。
@@ -79,6 +80,19 @@ class DmSoft:
                 from .dx.input import DxMouseKeyboard
                 self._dx.bind_input(hwnd)
                 self._dxmk = DxMouseKeyboard(self._dx, hwnd)
+            if mouse == "windows2":
+                # 大漠 windows2 缩写 = dx.mouse.position.lock.api|...|dx.mouse.state.message:
+                # dx 消息鼠标 + GetCursorPos 虚拟光标锁 —— 治"能移动不能点击"
+                # (游戏点击处理里读真实光标, 坐标对不上 → 忽略点击; 华夏坐实待记)。
+                if self._dxmk is None:
+                    if self._dx is None:
+                        from .dx.host import DxHost
+                        self._dx = DxHost(self._win.pid())
+                        self._dx.bind()
+                    from .dx.input import DxMouseKeyboard
+                    self._dx.bind_input(hwnd)
+                    self._dxmk = DxMouseKeyboard(self._dx, hwnd)
+                self._dx.mouse_lock(True)
             if mouse.startswith("windows"):
                 if self._dxmk is None and self._mk is None:
                     self._mk = MouseKeyboard(self._win)
