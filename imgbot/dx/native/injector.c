@@ -148,11 +148,16 @@ int main(int argc, char **argv)
         return fail("remote-load", GetLastError());
     }
 
-    /* 4) 模块快照拿远程基址(退出码在 x64 会截断, 不用它) */
+    /* 4) 模块快照拿远程基址(退出码在 x64 会截断, 不用它)。
+     * 护甲目标(模块隐藏型, 华夏实测): LoadLibrary 成功(rc=HMODULE)但快照看不见
+     * —— x86 下 DWORD 退出码就是完整 32 位基址, 兜底直接用它。 */
     wchar_t baseLower[MAX_PATH];
     wcscpy(baseLower, wcsrchr(dllPath, L'\\') ? wcsrchr(dllPath, L'\\') + 1 : dllPath);
     _wcslwr(baseLower);
     DWORD_PTR remoteBase = find_module(pid, baseLower);
+#ifndef _WIN64
+    if (!remoteBase && rc) remoteBase = rc;      /* x86: 退出码=HMODULE */
+#endif
     VirtualFreeEx(hp, remotePath, 0, MEM_RELEASE);
     if (!remoteBase) { CloseHandle(hp); return fail("no-remote-base", 0); }
 

@@ -63,17 +63,19 @@ k32.CloseHandle.argtypes = [ctypes.c_void_p]
 
 
 def target_bitness(pid: int) -> str:
-    """'32'/'64'; 探不到抛 OSError。"""
-    h = k32.OpenProcess(0x1000, False, pid)
-    if not h:
-        raise OSError(f"OpenProcess({pid}) 失败: {ctypes.get_last_error()}")
-    try:
-        wow = ctypes.c_int()
-        if not k32.IsWow64Process(h, ctypes.byref(wow)):
-            raise OSError("IsWow64Process 失败")
-        return "32" if wow.value else "64"
-    finally:
-        k32.CloseHandle(h)
+    """'32'/'64'; 探不到抛 OSError。QUERY_LIMITED 被拒时退 QUERY_INFORMATION
+    (客户端护甲 DACL 常见放行 0x400 拒 0x1000, IsWow64Process 两者皆可用)。"""
+    for rights in (0x1000, 0x0400):
+        h = k32.OpenProcess(rights, False, pid)
+        if h:
+            try:
+                wow = ctypes.c_int()
+                if not k32.IsWow64Process(h, ctypes.byref(wow)):
+                    raise OSError("IsWow64Process 失败")
+                return "32" if wow.value else "64"
+            finally:
+                k32.CloseHandle(h)
+    raise OSError(f"OpenProcess({pid}) 失败: {ctypes.get_last_error()}")
 
 
 class DxHost:
