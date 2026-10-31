@@ -1,6 +1,6 @@
 [project]
 name = "imgbot"
-version = "0.1.0"
+version = "0.2.0"
 description = "双目标图色脚本基础库(PC窗口 + 安卓模拟器): 模板/多点找色/区域找色/OCR/逐字读数/拟人键鼠/Target双后端"
 requires-python = ">=3.12"
 dependencies = [
@@ -23,9 +23,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["imgbot"]
 
+[tool.hatch.build]
+# 潜影注入件是 zig 构建产物(gitignore 不入库), 强制打进 wheel —— 文件分发模型
+# 下消费方(icefrag 薄项目)只拿 whl, 没有源仓可依赖
+artifacts = ["imgbot/dx/bin/*"]
+
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
 
 [tool.uv]
-python-install-mirror = "https://mirrors.cloud.tencent.com/python-build-standalone"
+python-install-mirror = "https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone"
