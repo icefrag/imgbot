@@ -57,10 +57,11 @@ class DxMouseKeyboard:
             if dt:
                 time.sleep(dt)
 
-    def click(self, x: int, y: int):
-        """后台点击: 拟人轨迹到位 → 左键按下/抬起(同步送达)。"""
+    def click(self, x: int, y: int, settle: float | None = None):
+        """后台点击: 拟人轨迹到位 → 左键按下/抬起(同步送达)。
+        settle: 到位停顿秒数覆盖(None=默认 inter_action_delay)。"""
         self._glide(x, y)
-        time.sleep(self.delay)
+        time.sleep(self.delay if settle is None else settle)
         self.host.mouse(x, y, M_LDOWN)
         time.sleep(self.delay)
         self.host.mouse(x, y, M_LUP)
@@ -74,9 +75,10 @@ class DxMouseKeyboard:
         self.host.mouse(x, y, M_RUP)
         self._pos = (x, y)
 
-    def double_click(self, x: int, y: int, gap: float = 0.09):
+    def double_click(self, x: int, y: int, gap: float = 0.09,
+                     settle: float | None = None):
         """后台双击: 单击后紧跟 WM_LBUTTONDBLCLK(第二击用双击语义)。"""
-        self.click(x, y)
+        self.click(x, y, settle=settle)
         time.sleep(gap)                      # 须落在系统双击间隔内(默认 500ms)
         self.host.mouse(x, y, M_DBLCLK)
         time.sleep(self.delay)

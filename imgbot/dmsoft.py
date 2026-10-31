@@ -175,7 +175,9 @@ class DmSoft:
         raise NotImplementedError("SetInputDm 未实现")
 
     def EnableRealMouse(self, enable: int, mousedelay: int, mousestep: int) -> int:
-        """拟人轨迹已在键鼠层默认开启(贝塞尔+ease-out), 此开关为兼容而设。"""
+        """未实现: 拟人轨迹不在 MoveTo 层(那会连累拖拽插值), 在一步式点击里
+        (keymouse.click, 轨迹+停顿内置); MoveTo+LeftClick 两步写法是瞬移。
+        兼容大漠调用形状, 恒返 1。"""
         return 1
 
     def EnableRealKeypad(self, enable: int) -> int:
@@ -328,6 +330,12 @@ class DmSoft:
     def _need_dx(self):
         if self._dx is None:
             raise RuntimeError("该接口需要 dx 通道(BindWindow mouse/keypad/display 含 'dx')")
+
+    @property
+    def keymouse(self):
+        """绑定键鼠对象(跨通道同形门面): click(x, y[, settle]) = 一步拟人点击
+        (贝塞尔轨迹到位→停顿→按下); MoveTo+LeftClick 两步是瞬移, 无轨迹。"""
+        return self._mk_()
 
     def MoveTo(self, x, y):
         """移动虚拟光标(客户区坐标); 越出客户区矩形拒绝并返回 0(大漠反编译

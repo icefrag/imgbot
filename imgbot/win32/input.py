@@ -122,19 +122,20 @@ class MouseKeyboard:
             if dt:
                 time.sleep(dt)
 
-    def click(self, x, y):
-        """后台点击: 拟人轨迹接近后按下/抬起(实测生效的顺序与延时)。"""
+    def click(self, x, y, settle=None):
+        """后台点击: 拟人轨迹接近后按下/抬起(实测生效的顺序与延时)。
+        settle: 到位停顿秒数覆盖(None=默认 inter_action_delay)。"""
         self._ensure_alive()
         self._glide(x, y)
-        time.sleep(self.delay)
+        time.sleep(self.delay if settle is None else settle)
         self.window.post_message(WM_LBUTTONDOWN, MK_LBUTTON, _lp(x, y))
         time.sleep(self.delay)
         self.window.post_message(WM_LBUTTONUP, 0, _lp(x, y))
         self._pos = (x, y)
 
-    def double_click(self, x, y, gap=0.09):
+    def double_click(self, x, y, gap=0.09, settle=None):
         """后台双击: 单击后紧跟 WM_LBUTTONDBLCLK(第二击用双击语义)。"""
-        self.click(x, y)
+        self.click(x, y, settle=settle)
         time.sleep(gap)                      # 须落在系统双击间隔内(默认 500ms)
         self.window.post_message(WM_LBUTTONDBLCLK, MK_LBUTTON, _lp(x, y))
         time.sleep(self.delay)
@@ -294,9 +295,9 @@ class SendInputMouseKeyboard:
     def move(self, x, y, steps=0, interval=0.018):
         self._glide(x, y)
 
-    def click(self, x, y):
+    def click(self, x, y, settle=None):
         self._glide(x, y)
-        time.sleep(self.delay)
+        time.sleep(self.delay if settle is None else settle)
         self._button(_MF_LEFTDOWN, _MF_LEFTUP)
 
     def right_click(self, x, y):
@@ -304,8 +305,8 @@ class SendInputMouseKeyboard:
         time.sleep(self.delay)
         self._button(_MF_RIGHTDOWN, _MF_RIGHTUP)
 
-    def double_click(self, x, y, gap=0.09):
-        self.click(x, y)
+    def double_click(self, x, y, gap=0.09, settle=None):
+        self.click(x, y, settle=settle)
         time.sleep(gap)
         self._button(_MF_LEFTDOWN, _MF_LEFTUP)      # 系统按双击间隔自己合成 DBLCLK
 

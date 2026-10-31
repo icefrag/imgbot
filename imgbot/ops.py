@@ -210,8 +210,7 @@ class Ops:
             hit = self._find(pic, region, threshold)
         if not hit:
             return False
-        self.dm.MoveTo(hit[0], hit[1])
-        self.dm.LeftClick()
+        self.dm.keymouse.click(hit[0], hit[1])   # 一步式: 贝塞尔轨迹+停顿内置
         if not verify:
             return True
         # 停止信号贯穿到验证阶段; 返回转 bool(等待族语义: 验证失败=False)
