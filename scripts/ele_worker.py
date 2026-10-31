@@ -26,14 +26,20 @@ def main():
             return
         jobs = sorted(WORK.glob("*.job.py"))
         for job in jobs:
-            out = job.with_suffix(".out")
-            print(f"跑 {job.name}", flush=True)
-            r = subprocess.run([sys.executable, str(job)], cwd=str(WORK.parent),
+            # 原子占有: rename 失败=别的工蜂先抢了, 跳过(防并发双跑同一 job)
+            claim = job.with_suffix(".claim")
+            try:
+                job.rename(claim)
+            except OSError:
+                continue
+            out = claim.with_suffix(".out")
+            print(f"跑 {claim.name}", flush=True)
+            r = subprocess.run([sys.executable, str(claim)], cwd=str(WORK.parent),
                                capture_output=True, text=True, errors="replace",
                                timeout=600)
             out.write_text(f"--- exit={r.returncode} ---\n"
                            f"{r.stdout}\n{r.stderr}", encoding="utf-8")
-            job.unlink()
+            claim.unlink()
         time.sleep(0.3)
 
 
