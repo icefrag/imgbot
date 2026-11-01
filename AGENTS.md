@@ -135,8 +135,9 @@
 - **华夏免费版私服(复古无锻造)四重墙实测(2026-10-31)**: ①客户端 32 位
   (*GodClass*, GDI 图色 OK); ②game.exe **自带进程护甲**(与[盾]登录器无关):
   DACL 拒 VM_READ/VM_OPERATION/CREATE_THREAD 但放行 0x400, 且**看门狗周期回挂**
-  (解封后 ~35s 内被重新挂上)——OWNER WRITE_DAC 改写成 Everyone 全权可解, 但要
-  **解封后立刻注入**(injector 已兼容); ③**模块隐藏**: LoadLibrary 明明成功
+  (解封后 ~35s 内被重新挂上)——OWNER WRITE_DAC 改写成 Everyone 全权可解
+  (`win32.window.unlock_process_dacl`, **DxHost.bind 注入被拒时自动解封重试**,
+  消费方无感); ③**模块隐藏**: LoadLibrary 明明成功
   (退出码=HMODULE)但模块枚举看不见 → 注入器 x86 用退出码当远程基址兜底;
   ④提权运行(HIGH IL, [盾]所赐), 普通权限宿主 PostMessage(WM_KEYDOWN)/
   PrintWindow/SetWindowPos 全被 UIPI 拒 err5 —— 宿主必须提权跑。

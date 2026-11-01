@@ -133,6 +133,35 @@ def is_elevated():
     return bool(ctypes.WinDLL("shell32").IsUserAnAdmin())
 
 
+def unlock_process_dacl(pid: int) -> bool:
+    """以 OWNER 身份把目标进程 DACL 改写成 Everyone 全权([盾]类登录器/自带护甲
+    挂的进程锁, 拒 VM_READ/VM_OPERATION/CREATE_THREAD → 注入打不开进程)。
+
+    OWNER 保留 WRITE_DAC 所以总能改; 拿不到 WRITE_DAC(本就无锁)返回 False。
+    护甲看门狗会周期回挂 —— 绑定注入要紧跟解锁(库内 DxHost.bind 已自动做)。"""
+    h = kernel32.OpenProcess(0x40000, False, pid)          # WRITE_DAC
+    if not h:
+        return False
+    adv = ctypes.WinDLL("advapi32")
+    sid = ctypes.c_void_p()
+    if not adv.ConvertStringSidToSidW("S-1-1-0", ctypes.byref(sid)):
+        kernel32.CloseHandle(h)
+        return False
+
+    class ACL(ctypes.Structure):
+        _fields_ = [("rev", ctypes.c_ubyte), ("sbz1", ctypes.c_ubyte),
+                    ("size", ctypes.c_ushort), ("aces", ctypes.c_ushort),
+                    ("sbz2", ctypes.c_ushort)]
+    buf = ctypes.create_string_buffer(64)
+    pacl = ctypes.cast(buf, ctypes.POINTER(ACL))
+    adv.InitializeAcl(pacl, 64, 2)
+    adv.AddAccessAllowedAce(pacl, 2, 0x1F0FFF, sid)        # Everyone: PROCESS_ALL
+    rc = adv.SetSecurityInfo(h, 6, 0x80000004, None, None,  # KERNEL_OBJECT|PROTECTED_DACL
+                             ctypes.cast(pacl, ctypes.c_void_p), None)
+    kernel32.CloseHandle(h)
+    return rc == 0
+
+
 # ---- 大漠 SetWindowState 0-14 口径(官方参数表对齐) ----
 def set_window_state(hwnd: int, flag: int) -> bool:
     """窗口状态操作(大漠 SetWindowState 同表)。

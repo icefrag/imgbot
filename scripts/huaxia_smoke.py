@@ -25,29 +25,11 @@ GROUND = (400, 260)          # 画面中部空地(人物会走过去)
 
 
 def unlock_dacl(pid: int) -> None:
-    """OWNER WRITE_DAC → Everyone 全权([盾]挂的锁, 无看门狗; 已解封则幂等跳过)."""
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    adv = ctypes.WinDLL("advapi32", use_last_error=True)
-    k32.OpenProcess.restype = ctypes.c_void_p
-    h = ctypes.c_void_p(k32.OpenProcess(0x40000, False, pid))  # WRITE_DAC
-    if not h:
-        print(f"  WRITE_DAC 拿不到(err={ctypes.get_last_error()}), 若注入仍通可无视")
-        return
-    sid = ctypes.c_void_p()
-    adv.ConvertStringSidToSidW("S-1-1-0", ctypes.byref(sid))
-
-    class ACL(ctypes.Structure):
-        _fields_ = [("rev", ctypes.c_ubyte), ("sbz1", ctypes.c_ubyte),
-                    ("size", ctypes.c_ushort), ("aces", ctypes.c_ushort),
-                    ("sbz2", ctypes.c_ushort)]
-    buf = ctypes.create_string_buffer(64)
-    pacl = ctypes.cast(buf, ctypes.POINTER(ACL))
-    adv.InitializeAcl(pacl, 64, 2)
-    adv.AddAccessAllowedAce(pacl, 2, 0x1F0FFF, sid)
-    rc = adv.SetSecurityInfo(h, 6, 0x80000004, None, None,
-                             ctypes.cast(pacl, ctypes.c_void_p), None)
-    k32.CloseHandle(h)
-    print(f"  DACL 解封 rc={rc}(0=成功)")
+    """[盾]进程锁解封(幂等; DxHost.bind 注入被拒时也会自动做, 这里显式跑一遍
+    是为了让烟测第一步就报出明确的解锁结果)."""
+    from imgbot.win32.window import unlock_process_dacl
+    ok = unlock_process_dacl(pid)
+    print("  DACL 解封", "ok" if ok else "无需(拿不到 WRITE_DAC=进程本就没锁)")
 
 
 def px_changed(a, b):

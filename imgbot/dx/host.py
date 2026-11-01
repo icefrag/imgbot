@@ -106,12 +106,26 @@ class DxHost:
             raise OSError(f"MapViewOfFile 失败: {ctypes.get_last_error()}")
         struct.pack_into("<30I", (ctypes.c_char * SHM_SIZE).from_address(self._view),
                          0, MAGIC, 7, *([0] * 28))
-        try:
+        def inject_once():
             r = subprocess.run([str(self._injector), str(self.pid), str(self._dll)],
                                capture_output=True, text=True, timeout=30)
             out = r.stdout.strip()
             if not out.startswith("OK"):
                 raise RuntimeError(f"注入失败: {out} {r.stderr.strip()}")
+            return out
+
+        try:
+            try:
+                out = inject_once()
+            except RuntimeError as e:
+                # 护甲锁进程([盾]类 DACL): 仅对"权限拒绝"型失败做 OWNER 解封重试,
+                # 其他失败原样抛(别把无辜进程的 DACL 降成 Everyone)
+                if "ERR open gle=5" not in str(e):
+                    raise
+                from ..win32.window import unlock_process_dacl
+                if not unlock_process_dacl(self.pid):
+                    raise
+                out = inject_once()
             rc = int(out.split("rc=")[1])
             if rc != 0:
                 raise RuntimeError(

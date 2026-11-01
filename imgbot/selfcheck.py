@@ -607,6 +607,10 @@ def main():
     finally:
         cleanup5()
 
+    # ---- win32: 进程 DACL 解封(护甲锁; 本进程无锁, 验证幂等不炸+返回 bool) ----
+    from .win32.window import unlock_process_dacl
+    assert isinstance(unlock_process_dacl(_kernel32.GetCurrentProcessId()), bool)
+
     # ---- win32: LockInput(BlockInput; lock=1 需管理员, 不断言锁定结果只走通解锁;
     # 记账挂实例 —— 锁/解同一对象才有"真锁过"语义) ----
     from .dmsoft import DmSoft

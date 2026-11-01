@@ -18,7 +18,8 @@ from imgbot.dx import DxHost
 from imgbot.dx.host import KEY_DOWN, KEY_UP
 
 u32 = ctypes.WinDLL("user32")
-VK_A = 0x41
+VK_F13 = 0x7C   # 真键盘没有 F13: 打字免疫, 管轮询判据
+VK_A = 0x41     # 有扫描码才能 TranslateMessage 出 WM_CHAR, 管消息判据
 
 
 def read_counters(hwnd: int) -> dict:
@@ -54,29 +55,35 @@ def main():
     host.bind()
     try:
         host.bind_input(hwnd)
-        # -- 阶段1: 无钩子, 纯消息(预期: kd/char 通, down 仍为 0) --
-        host.key(VK_A, KEY_DOWN)
-        time.sleep(0.3)
-        host.key(VK_A, KEY_UP)
+
+        def tap(vk, hold=0.3):
+            host.key(vk, KEY_DOWN)
+            time.sleep(hold)
+            host.key(vk, KEY_UP)
+            time.sleep(0.15)
+
+        # -- 阶段1: 无钩子, 纯消息。双键分工: F13 轮询判据(真键盘无此键, 打字免疫),
+        #    A 键消息/WM_CHAR 判据(kspoll 非焦点, 真人打字进不来) --
+        tap(VK_A)
+        tap(VK_F13)
         c1 = wait_counters(hwnd)
         print(f"阶段1(无钩): {c1}")
-        # -- 阶段2: 挂键态钩子, 再打一轮 --
+        # -- 阶段2: 挂键态钩子, 再各打一轮 --
         host.hook_keystate()
-        host.key(VK_A, KEY_DOWN)
-        time.sleep(0.3)
-        host.key(VK_A, KEY_UP)
-        time.sleep(0.3)
+        tap(VK_F13)
+        tap(VK_A)
         c2 = wait_counters(hwnd)
         print(f"阶段2(挂钩): {c2}")
 
-        ok1 = c1.get("down") == 0 and c1.get("kd", 0) >= 1 and c1.get("char", 0) >= 1
+        ok1 = (c1.get("down") == 0 and c1.get("latch") == 0 and c1.get("gks") == 0
+               and c1.get("kd", 0) >= 2 and c1.get("char", 0) >= 1)
         grew = lambda k: c2.get(k, -1) > c1.get(k, 0)
         ok2 = grew("down") and c2.get("latch", 0) - c1.get("latch", 0) == 1 \
             and grew("gks") and grew("kd") and grew("char")
         print("阶段1 判定:", "PASS" if ok1 else "FAIL",
-              "(kd/char=消息+Translate 通, down=0 死案坐实)")
+              "(A: kd/char=消息+Translate 通; F13: down=0 死案坐实, 且对打字免疫)")
         print("阶段2 判定:", "PASS" if ok2 else "FAIL",
-              "(down/gks=虚拟状态被轮询读到, latch=读后清)")
+              "(F13: down/gks=虚拟状态被轮询读到, latch=读后清; A: 消息链不回归)")
         return 0 if ok1 and ok2 else 3
     finally:
         try:

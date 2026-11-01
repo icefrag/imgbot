@@ -42,10 +42,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     for (;;) {
         POINT cp;
         if (GetCursorPos(&cp)) { g_gcx = cp.x; g_gcy = cp.y; }
-        SHORT a = GetAsyncKeyState(0x41);      /* 'A' */
+        SHORT a = GetAsyncKeyState(0x7C);      /* F13: 真键盘无此键, 轮询读数只可能来自钩子/注入 */
         if (a & 0x8000) g_down++;
         if (a & 1) g_latch++;
-        if (GetKeyState(0x41) & 0x8000) g_gks++;
+        if (GetKeyState(0x7C) & 0x8000) g_gks++;
         MSG msg;
         while (PeekMessageW(&msg, NULL, 0, 0, 1)) {
             if (msg.message == 0x12) return 0; /* WM_QUIT */

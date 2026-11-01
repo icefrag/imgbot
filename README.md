@@ -208,6 +208,7 @@ t.tap(*hit[:2])
 | `window.set_window_state(hwnd, flag)` | 窗口状态操作(大漠 SetWindowState 0-14 口径: 0 关闭/1 激活/2 最小化/3 最小化+释放内存/4 最大化/5 恢复/6 隐藏/7 显示/8 置顶/9 取消置顶/10 禁用/11 解禁/12 恢复并激活/13 强杀进程/14 闪烁) |
 | `window.enum_windows_dm(parent=0, title="", class_name="", filter_=0, pids=None)` | 枚举窗口(大漠 EnumWindow 语义: 模糊匹配, filter 位 1 标题/2 类名/8 可见/16 最小化/32 最大化/64 弹出式, 可加法组合) |
 | `window.pids_of_process(name)` | 按进程名(exe, 可不带后缀)取 pid 集(EnumWindowByProcess 用) |
+| `window.unlock_process_dacl(pid)` | OWNER 解封护甲进程锁([盾]类 DACL→Everyone 全权; DxHost.bind 注入被拒时自动做) |
 | `input.human_path(x0, y0, x1, y1, rng, max_s=0.12)` | 拟人轨迹计算(纯函数, 可测) |
 
 异常类: `window.UipiError`(目标权限高于本进程, 需管理员同级)、`window.WindowLostError`(窗口被关/句柄过期)、
