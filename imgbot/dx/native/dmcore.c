@@ -807,6 +807,101 @@ static LRESULT CALLBACK sub_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
     return CallWindowProcW(g_origProc, h, msg, w, l);
 }
 
+/* ---- API 级激活锁(大漠 dx.public.active.api, 2026-11-01 华夏坐实其必要性):
+ * ---- 消息级假激活只吞失焦消息, 救不了"点击时轮询 GetForegroundWindow/
+ * ---- GetActiveWindow/GetFocus 系统态"的游戏(华夏世界画面实测: 真后台时
+ * ---- 消息级假激活+光标锁+键态钩全家桶仍 0/5, 真前台秒通)。钩住三查询
+ * ---- 返回绑定窗口 —— 与消息级假激活同开关(fake_active)双管齐下。 ---- */
+static volatile LONG g_afApi;                 /* API 锁闸 */
+static DWORD *g_fwSlot, *g_gaSlot, *g_gtiSlot;  /* 槽地址(FF25/FF15 thunk 指针) */
+static DWORD   g_fwOrig, g_gaOrig, g_gtiOrig;   /* 原槽值(还原用) */
+
+/* 这三个查询在 Win10 x86 user32 里是导入 thunk, 无热补丁哨兵:
+ *   GetForegroundWindow: FF 25 [ptr]              jmp 槽
+ *   GetActiveWindow:     6A 01 FF 15 [ptr] C3     push 1; call 槽
+ *   GetFocus:            6A 00 FF 15 [ptr] C3     push 0; call 槽  ← 与上者共槽!
+ * 挂法 = 改槽指针(改一个 DWORD, 不动代码); GA/GF 共槽, 用 push 实参区分语义。 */
+static HWND WINAPI our_gfw(void)
+{
+    if (g_afApi && g_hwnd && IsWindow(g_hwnd)) return g_hwnd;
+    return (HWND)(DWORD_PTR)((HWND (WINAPI *)(void))g_fwOrig)();
+}
+static DWORD WINAPI our_ga_gate(DWORD which)   /* which: 1=ActiveWindow 0=Focus */
+{
+    if (g_afApi && g_hwnd && IsWindow(g_hwnd) && which <= 1)
+        return (DWORD)(DWORD_PTR)g_hwnd;
+    return ((DWORD (WINAPI *)(DWORD))g_gaOrig)(which);
+}
+
+static BOOL WINAPI our_gti(DWORD tid, void *info)   /* GetGUIThreadInfo 输出改写 */
+{
+    BOOL r = ((BOOL (WINAPI *)(DWORD, void *))g_gtiOrig)(tid, info);
+    if (g_afApi && r && info && g_hwnd && IsWindow(g_hwnd)) {
+        DWORD *f = (DWORD *)info;   /* x86 GUITHREADINFO: cb flg Active Focus Capture */
+        f[2] = (DWORD)(DWORD_PTR)g_hwnd;   /* hwndActive */
+        f[3] = (DWORD)(DWORD_PTR)g_hwnd;   /* hwndFocus  */
+        f[4] = (DWORD)(DWORD_PTR)g_hwnd;   /* hwndCapture */
+    }
+    return r;
+}
+
+static int patch_slot(DWORD *slot, DWORD value, DWORD *saved)
+{
+    DWORD oldProt;
+    if (!slot) return 95;
+    if (!VirtualProtect(slot, 4, PAGE_READWRITE, &oldProt)) return 96;
+    *saved = *slot;
+    *slot = value;
+    VirtualProtect(slot, 4, oldProt, &oldProt);
+    return 0;
+}
+
+static int hook_active_api(void)
+{
+    if (g_fwSlot) { g_afApi = 1; return 0; }          /* 已挂, 开闸 */
+    HMODULE u = GetModuleHandleA("user32.dll");
+    if (!u) return 90;
+    BYTE *gfw = (BYTE *)GetProcAddress(u, "GetForegroundWindow");
+    BYTE *gaw = (BYTE *)GetProcAddress(u, "GetActiveWindow");
+    BYTE *gf  = (BYTE *)GetProcAddress(u, "GetFocus");
+    if (!gfw || !gaw || !gf) return 91;
+    /* 形状校验: 看准了才下槽, 形状变了(系统升级)报码不硬来 */
+    if (gfw[0] != 0xFF || gfw[1] != 0x25) return 93;
+    if (gaw[0] != 0x6A || gaw[2] != 0xFF || gaw[3] != 0x15) return 93;
+    if (gf[0]  != 0x6A || gf[2]  != 0xFF || gf[3]  != 0x15) return 93;
+    DWORD *fwSlot = (DWORD *)(DWORD_PTR)*(DWORD *)(gfw + 2);  /* FF 25 [slot] */
+    DWORD *gaSlot = (DWORD *)(DWORD_PTR)*(DWORD *)(gaw + 4);  /* FF 15 [slot] */
+    if (!fwSlot || !gaSlot) return 94;
+    int rc = patch_slot(fwSlot, (DWORD)(DWORD_PTR)our_gfw, &g_fwOrig);
+    if (rc) return 100 + rc;
+    g_fwSlot = fwSlot;
+    rc = patch_slot(gaSlot, (DWORD)(DWORD_PTR)our_ga_gate, &g_gaOrig);
+    if (rc) {                                         /* 第二槽失败回滚第一槽 */
+        patch_slot(g_fwSlot, g_fwOrig, &g_fwOrig);
+        g_fwSlot = NULL;
+        return 101 + (rc - 100);
+    }
+    g_gaSlot = gaSlot;
+    /* GetGUIThreadInfo(游戏常查它拿前台线程的 Active/Focus/Capture, 前三钩盖不住):
+       同为 FF 25 槽 thunk, 输出改写 hwndActive/hwndFocus/hwndCapture */
+    BYTE *gti = (BYTE *)GetProcAddress(u, "GetGUIThreadInfo");
+    if (gti && gti[0] == 0xFF && gti[1] == 0x25) {
+        DWORD *gtiSlot = (DWORD *)(DWORD_PTR)*(DWORD *)(gti + 2);
+        if (gtiSlot && patch_slot(gtiSlot, (DWORD)(DWORD_PTR)our_gti, &g_gtiOrig) == 0)
+            g_gtiSlot = gtiSlot;      /* 形状不符/失败: 容忍, 前三钩仍在 */
+    }
+    g_afApi = 1;
+    return 0;
+}
+
+static void unhook_active_api(void)
+{
+    g_afApi = 0;
+    if (g_fwSlot) { patch_slot(g_fwSlot, g_fwOrig, &g_fwOrig); g_fwSlot = NULL; }
+    if (g_gaSlot) { patch_slot(g_gaSlot, g_gaOrig, &g_gaOrig); g_gaSlot = NULL; }
+    if (g_gtiSlot) { patch_slot(g_gtiSlot, g_gtiOrig, &g_gtiOrig); g_gtiSlot = NULL; }
+}
+
 static int fake_active(int enable)
 {
     if (enable) {
@@ -817,12 +912,16 @@ static int fake_active(int enable)
                                                (LONG_PTR)sub_proc);
         if (!g_origProc) return (int)GetLastError();
         g_subHwnd = g_hwnd;
+        /* API 级激活锁(GetForegroundWindow/GetActiveWindow/GetFocus 轮询免疫) */
+        int rc2 = hook_active_api();
+        if (rc2) { /* API 锁失败不致命: 消息级仍生效, 诊断码透传宿主(>=90) */ }
         /* 合成一次"被激活+得焦", 把窗口先带进激活态 */
         SendMessageTimeoutW(g_hwnd, WM_ACTIVATE, MAKELPARAM(1, 0), 0,
                             SMTO_FLAGS, 2000, NULL);
         SendMessageTimeoutW(g_hwnd, WM_SETFOCUS, 0, 0, SMTO_FLAGS, 2000, NULL);
-        return 1;
+        return rc2 == 0 ? 1 : 100 + rc2;   /* 1=全开; 1xx=消息级开但 API 锁挂(码-100) */
     }
+    unhook_active_api();
     if (!g_subHwnd) return 0;
     /* 只在当前 wndproc 仍是 sub_proc 时还原(被人叠过类就不硬扒) */
     if ((WNDPROC)GetWindowLongPtrW(g_subHwnd, GWLP_WNDPROC) == sub_proc)

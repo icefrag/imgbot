@@ -121,13 +121,18 @@
   user32!GetKeyState/GetAsyncKeyState 喂虚拟按住态(大漠同机制, x86 专用),
   验收 scripts/dx_keystate_smoke.py; DirectInput 游戏还需 dinput8!GetDeviceState
   钩子(留位未实现)。
-- **"鼠标能移动不能点击"= 点击处理有窗口激活门槛**(华夏世界画面定论, 2026-11-01):
-  游戏非激活时忽略全部点击消息, 移动(hover)与键盘热键不受门槛 —— 所以"能移动、
-  键盘好使、就是不能点"。**最小解 = `mouse="dx"` + `dm.EnableFakeActive(1)`**
-  (假激活让游戏自认激活; 实测 8/8 走路, 光标锁/键态钩都不需要)。通用备胎仍留:
-  `DxHost.mouse_lock()`(CMD_MOUSE_LOCK, 协议 v7, 钩 GetCursorPos 喂虚拟光标,
-  大漠 dx.mouse.position.lock.api 同款)与 `DmSoft mouse="windows2"` —— 治的是
-  另一种病(点击处理读真实光标坐标的), 华夏不是这种, 别个游戏可能用上。
+- **"鼠标能移动不能点击"类目标**(华夏世界画面, 2026-11-01 全量实验后修正):
+  华夏世界点击有激活门槛, 但**比消息级/API级假激活更深** —— 潜影已实现双级
+  假激活(EnableFakeActive = 消息吞失焦 + API 锁: GetForegroundWindow/
+  GetActiveWindow/GetFocus 槽补丁 + GetGUIThreadInfo 输出改写, Win10 x86
+  实测三查询全被改写), 加键态钩+光标锁+send/post 双路+先激活后布防全组合,
+  真后台点击仍**无规律偶发**(同配置时走时不走; 判读必须像素计数)。
+  最可能根因: 游戏轮询激活态绕过 user32 直查内核(win32k 直 syscall), 用户态
+  钩子原理性盖不住。⚠ 早前"dx+EnableFakeActive 8/8 走路"结论**作废**(实验被
+  前台污染: 成功批次游戏全程真前台)。**当前可靠结论**: 键盘后台✅/图色后台✅/
+  登录界面点击后台✅/世界画面点击**前台可用**(游戏激活时 dx/normal 都 100%),
+  世界画面真后台点击=未攻克(需要前台模式或等内核级方案)。
+  通用备胎仍留: `DxHost.mouse_lock()` 与 `mouse="windows2"`(治点击读真实光标类)。
 - **判读尺陷阱(实测踩过)**: 自动判"点击有没有反应"别用全帧均值 diff ——
   大静态背景会把局部大变化稀释到 2-3(华夏软键盘面板开合 17k 像素, 均值才 2.9,
   一度全军误判"点击无效")。用**变化像素计数**(灰差>30 的像素数), 局部 UI 变化
