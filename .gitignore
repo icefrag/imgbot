@@ -8,3 +8,4 @@ imgbot/dx/bin/
 # 运行产物(烟测截图/日志, 不入库)
 logs/
 .elework/
+imgbot/dx/native/obfstrings.gen.h

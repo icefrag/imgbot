@@ -20,6 +20,7 @@
  * 协议/布局见 host.py 头注释, 两端必须同步改。
  */
 #include <windows.h>
+#include "obfstrings.gen.h"   /* 构建期生成(build.py): 遮蔽串密文+obf_init 解码 */
 
 #define SHM_MAGIC   0x49425844u   /* "DXBI" */
 #define FRAME_OFF   4096
@@ -184,28 +185,28 @@ static int hotpatch(BYTE *func, void *detour, BYTE **trampOut, BYTE *orig5)
 static int hook_gl(void)
 {
     if (g_tramp) return 0;                           /* 已挂 */
-    HMODULE gl = GetModuleHandleA("opengl32.dll");
+    HMODULE gl = GetModuleHandleA(OBF_OPENGL32);
     if (!gl) return 20;                              /* 目标未用 GL */
-    p_glReadPixels   = (void *)GetProcAddress(gl, "glReadPixels");
-    p_glGetIntegerv  = (void *)GetProcAddress(gl, "glGetIntegerv");
-    p_glGetError     = (void *)GetProcAddress(gl, "glGetError");
-    p_wglCreateContext = (void *)GetProcAddress(gl, "wglCreateContext");
-    p_wglMakeCurrent = (void *)GetProcAddress(gl, "wglMakeCurrent");
-    p_wglGetCurrentContext = (void *)GetProcAddress(gl, "wglGetCurrentContext");
-    p_wglGetCurrentDC = (void *)GetProcAddress(gl, "wglGetCurrentDC");
+    p_glReadPixels   = (void *)GetProcAddress(gl, OBF_GLREADPIXELS);
+    p_glGetIntegerv  = (void *)GetProcAddress(gl, OBF_GLGETINTEGERV);
+    p_glGetError     = (void *)GetProcAddress(gl, OBF_GLGETERROR);
+    p_wglCreateContext = (void *)GetProcAddress(gl, OBF_WGLCREATECONTEXT);
+    p_wglMakeCurrent = (void *)GetProcAddress(gl, OBF_WGLMAKECURRENT);
+    p_wglGetCurrentContext = (void *)GetProcAddress(gl, OBF_WGLGETCURRENTCONTEXT);
+    p_wglGetCurrentDC = (void *)GetProcAddress(gl, OBF_WGLGETCURRENTDC);
     if (!p_glReadPixels || !p_glGetIntegerv) return 21;
 
     BYTE *func = NULL;
-    HMODULE gdi = GetModuleHandleA("gdi32.dll");
+    HMODULE gdi = GetModuleHandleA(OBF_GDI32);
     if (gdi) {
-        func = (BYTE *)GetProcAddress(gdi, "SwapBuffers");
+        func = (BYTE *)GetProcAddress(gdi, OBF_SWAPBUFFERS);
         /* Win10 上 gdi32!SwapBuffers 是 ff 25 (jmp [imm32]) 转发跳, 解引用拿真身 */
         if (func && func[0] == 0xFF && func[1] == 0x25) {
             BYTE **slot = *(BYTE ***)(func + 2);      /* x86 操作数 = 指针的绝对地址 */
             if (slot && *slot) func = *slot;          /* -> gdi32full!SwapBuffers */
         }
     }
-    if (!func) func = (BYTE *)GetProcAddress(gl, "wglSwapBuffers");
+    if (!func) func = (BYTE *)GetProcAddress(gl, OBF_WGLSWAPBUFFERS);
     if (!func) return 22;
     int rc = hotpatch(func, (void *)our_swap, &g_tramp, g_orig5);
     if (rc) { g_tramp = NULL; return rc; }
@@ -317,9 +318,9 @@ static BOOL WINAPI our_getcursorpos(LPPOINT pt)
 static int hook_mouse_lock(void)
 {
     if (g_gpTramp) { g_mlock = 1; return 0; }        /* 已挂, 只开闸 */
-    HMODULE u = GetModuleHandleA("user32.dll");
+    HMODULE u = GetModuleHandleA(OBF_USER32);
     if (!u) return 80;
-    BYTE *f = (BYTE *)GetProcAddress(u, "GetCursorPos");
+    BYTE *f = (BYTE *)GetProcAddress(u, OBF_GETCURSORPOS);
     if (!f) return 81;
     int rc = hotpatch(f, (void *)our_getcursorpos, &g_gpTramp, g_gpOrig);
     if (rc) { g_gpTramp = NULL; return 82 + (rc - 31); }
@@ -341,10 +342,10 @@ static void unhook_mouse_lock(void)
 static int hook_keystate(void)
 {
     if (g_ksTramp[0]) return 0;                       /* 已挂 */
-    HMODULE u = GetModuleHandleA("user32.dll");
+    HMODULE u = GetModuleHandleA(OBF_USER32);
     if (!u) return 70;
-    BYTE *fk = (BYTE *)GetProcAddress(u, "GetKeyState");
-    BYTE *fa = (BYTE *)GetProcAddress(u, "GetAsyncKeyState");
+    BYTE *fk = (BYTE *)GetProcAddress(u, OBF_GETKEYSTATE);
+    BYTE *fa = (BYTE *)GetProcAddress(u, OBF_GETASYNCKEYSTATE);
     if (!fk || !fa) return 71;
     int rc = hotpatch(fk, (void *)our_getkeystate, &g_ksTramp[0], g_ksOrig[0]);
     if (rc) return 72 + (rc - 31);                    /* 72 无哨兵(x64) 73 蹦床 74 保护 */
@@ -385,13 +386,18 @@ static void unhook_keystate(void)
  * 无焦点时 SetFocus(绑定窗口) 补。我们命令在 worker 线程, GetFocus 恒 NULL,
  * 等价只读替代 = GetGUIThreadInfo(绑定窗口线程).hwndFocus(窗口必须仍属于该线程);
  * SetFocus 补焦跨线程无效, 假激活通道(CMD_FAKE_ACTIVE)补这块。 */
+/* 直接调用会进 PE 导入表(名字裸露 —— 这俩恰是"键态/焦点探测"指纹 API),
+   与遮蔽策略冲突: 改动态解析缓存(DxInit 时取一次) */
+static SHORT (WINAPI *g_pGetAsyncKeyState)(int);
+static BOOL  (WINAPI *g_pGetGUIThreadInfo)(DWORD, void *);
+
 static HWND focus_or_bound(void)
 {
     DWORD tid = GetWindowThreadProcessId(g_hwnd, NULL);
     GUITHREADINFO gi;
     ZeroMemory(&gi, sizeof(gi));
     gi.cbSize = sizeof(gi);
-    if (GetGUIThreadInfo(tid, &gi) && gi.hwndFocus
+    if (g_pGetGUIThreadInfo && g_pGetGUIThreadInfo(tid, &gi) && gi.hwndFocus
         && GetWindowThreadProcessId(gi.hwndFocus, NULL) == tid
         && IsWindow(gi.hwndFocus))
         return gi.hwndFocus;
@@ -461,7 +467,8 @@ static int do_key(DWORD vk, DWORD mode)
     /* 虚拟 Alt 追踪(大漠宿主 ctx+100 同款): 脚本按住 Alt 期间后续键转
        WM_SYSKEYDOWN/UP + 上下文位 —— 后台合成时真实 Alt 并没按 */
     BOOL sysKey = (vk == VK_F10) || g_virtAlt
-                  || (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                  || (g_pGetAsyncKeyState
+                      && (g_pGetAsyncKeyState(VK_MENU) & 0x8000) != 0);
     if (mode == KEY_DOWN) {
         msg = sysKey ? WM_SYSKEYDOWN : WM_KEYDOWN;
         lp = (LPARAM)(scan << 16) | 1;
@@ -742,10 +749,10 @@ static int hook_d3d9(void)
         InterlockedExchange(&g_detached, 0);
         return 0;
     }
-    HMODULE d3d = GetModuleHandleA("d3d9.dll");
-    if (!d3d) d3d = LoadLibraryA("d3d9.dll");           /* 目标还没加载就先代载 */
+    HMODULE d3d = GetModuleHandleA(OBF_D3D9);
+    if (!d3d) d3d = LoadLibraryA(OBF_D3D9);           /* 目标还没加载就先代载 */
     if (!d3d) return 60;
-    BYTE *func = (BYTE *)GetProcAddress(d3d, "Direct3DCreate9");
+    BYTE *func = (BYTE *)GetProcAddress(d3d, OBF_DIRECT3DCREATE9);
     if (!func) return 61;
     int rc = hotpatch(func, (void *)our_d3dcreate9, &g_d3d9Tramp, g_d3d9Orig5);
     if (rc) { g_d3d9Tramp = NULL; return 62 + (rc - 31); }
@@ -871,11 +878,11 @@ static int patch_slot(DWORD *slot, DWORD value, DWORD *saved)
 static int hook_active_api(void)
 {
     if (g_fwSlot) { g_afApi = 1; return 0; }          /* 已挂, 开闸 */
-    HMODULE u = GetModuleHandleA("user32.dll");
+    HMODULE u = GetModuleHandleA(OBF_USER32);
     if (!u) return 90;
-    BYTE *gfw = (BYTE *)GetProcAddress(u, "GetForegroundWindow");
-    BYTE *gaw = (BYTE *)GetProcAddress(u, "GetActiveWindow");
-    BYTE *gf  = (BYTE *)GetProcAddress(u, "GetFocus");
+    BYTE *gfw = (BYTE *)GetProcAddress(u, OBF_GETFOREGROUNDWINDOW);
+    BYTE *gaw = (BYTE *)GetProcAddress(u, OBF_GETACTIVEWINDOW);
+    BYTE *gf  = (BYTE *)GetProcAddress(u, OBF_GETFOCUS);
     if (!gfw || !gaw || !gf) return 91;
     /* 形状校验: 看准了才下槽, 形状变了(系统升级)报码不硬来 */
     if (gfw[0] != 0xFF || gfw[1] != 0x25) return 93;
@@ -896,7 +903,7 @@ static int hook_active_api(void)
     g_gaSlot = gaSlot;
     /* GetGUIThreadInfo(游戏常查它拿前台线程的 Active/Focus/Capture, 前三钩盖不住):
        同为 FF 25 槽 thunk, 输出改写 hwndActive/hwndFocus/hwndCapture */
-    BYTE *gti = (BYTE *)GetProcAddress(u, "GetGUIThreadInfo");
+    BYTE *gti = (BYTE *)GetProcAddress(u, OBF_GETGUIThreadINFO);
     if (gti && gti[0] == 0xFF && gti[1] == 0x25) {
         DWORD *gtiSlot = (DWORD *)(DWORD_PTR)*(DWORD *)(gti + 2);
         if (gtiSlot && patch_slot(gtiSlot, (DWORD)(DWORD_PTR)our_gti, &g_gtiOrig) == 0)
@@ -926,12 +933,13 @@ static int fake_active(int enable)
         g_subHwnd = g_hwnd;
         /* API 级激活锁(GetForegroundWindow/GetActiveWindow/GetFocus 轮询免疫) */
         int rc2 = hook_active_api();
-        if (rc2) { /* API 锁失败不致命: 消息级仍生效, 诊断码透传宿主(>=90) */ }
+        if (rc2) { /* 失败不致命: 消息级仍生效。93=前导形状不符 —— x64 user32
+                      没有 x86 槽 thunk 形状, 属平台不支持而非错误, 视同全开 */ }
         /* 合成一次"被激活+得焦", 把窗口先带进激活态 */
         SendMessageTimeoutW(g_hwnd, WM_ACTIVATE, MAKELPARAM(1, 0), 0,
                             SMTO_FLAGS, 2000, NULL);
         SendMessageTimeoutW(g_hwnd, WM_SETFOCUS, 0, 0, SMTO_FLAGS, 2000, NULL);
-        return rc2 == 0 ? 1 : 100 + rc2;   /* 1=全开; 1xx=消息级开但 API 锁挂(码-100) */
+        return (rc2 == 0 || rc2 == 93) ? 1 : 100 + rc2;  /* 1=全开; 1xx=API锁挂(码-100) */
     }
     unhook_active_api();
     if (!g_subHwnd) return 0;
@@ -1050,7 +1058,7 @@ static int hook_mouse_pack(void)
     if (g_pack) return 0;
     if (!g_hdr) return 43;
     if (!g_hwnd || !IsWindow(g_hwnd)) return 40;
-    HMODULE u = GetModuleHandleA("user32.dll");
+    HMODULE u = GetModuleHandleA(OBF_USER32);
     if (!u) return 100;
     DWORD bits = 0;
     int fail = 0, rc;
@@ -1060,7 +1068,7 @@ static int hook_mouse_pack(void)
     rc = hook_mouse_lock();
     if (!rc) bits |= 2; else if (!fail) fail = rc;
 
-    BYTE *f = (BYTE *)GetProcAddress(u, "GetCapture");
+    BYTE *f = (BYTE *)GetProcAddress(u, OBF_GETCAPTURE);
     if (!f) { if (!fail) fail = 110; }
     else {
         rc = hotpatch(f, (void *)our_getcapture, &g_gcTramp, g_gcOrig);
@@ -1072,7 +1080,7 @@ static int hook_mouse_pack(void)
         }
     }
 
-    BYTE *gci = (BYTE *)GetProcAddress(u, "GetCursorInfo");
+    BYTE *gci = (BYTE *)GetProcAddress(u, OBF_GETCURSORINFO);
     if (gci && gci[0] == 0xFF && gci[1] == 0x25) {
         DWORD *slot = (DWORD *)(DWORD_PTR)*(DWORD *)(gci + 2);
         if (slot && patch_slot(slot, (DWORD)(DWORD_PTR)our_getcursorinfo,
@@ -1082,7 +1090,7 @@ static int hook_mouse_pack(void)
         } else if (!fail) fail = 121;
     } else if (!fail) fail = 122;
 
-    BYTE *cc = (BYTE *)GetProcAddress(u, "ClipCursor");
+    BYTE *cc = (BYTE *)GetProcAddress(u, OBF_CLIPCURSOR);
     if (cc && cc[0] == 0xFF && cc[1] == 0x25) {
         DWORD *slot = (DWORD *)(DWORD_PTR)*(DWORD *)(cc + 2);
         if (slot && patch_slot(slot, (DWORD)(DWORD_PTR)our_clipcursor,
@@ -1092,16 +1100,14 @@ static int hook_mouse_pack(void)
         } else if (!fail) fail = 125;
     } else if (!fail) fail = 126;
 
-    struct { const char *name; void *detour; } mtab[4] = {
-        {"PeekMessageW", (void *)our_peek_w},
-        {"PeekMessageA", (void *)our_peek_a},
-        {"GetMessageW",  (void *)our_get_w},
-        {"GetMessageA",  (void *)our_get_a},
-    };
+    const char *mnames[4] = { OBF_PEEKMESSAGEW, OBF_PEEKMESSAGEA,
+                              OBF_GETMESSAGEW, OBF_GETMESSAGEA };
+    void *mdetours[4] = { (void *)our_peek_w, (void *)our_peek_a,
+                          (void *)our_get_w, (void *)our_get_a };
     for (int i = 0; i < 4; i++) {
-        BYTE *fm = (BYTE *)GetProcAddress(u, mtab[i].name);
+        BYTE *fm = (BYTE *)GetProcAddress(u, mnames[i]);
         if (!fm) { if (!fail) fail = 130 + i * 4; continue; }
-        rc = hotpatch(fm, mtab[i].detour, &g_msgTramp[i], g_msgOrig[i]);
+        rc = hotpatch(fm, mdetours[i], &g_msgTramp[i], g_msgOrig[i]);
         if (rc) { g_msgTramp[i] = NULL; if (!fail) fail = 131 + i * 4 + (rc - 31); }
         else { g_msgFunc[i] = fm; bits |= 0x20 << i; }
     }
@@ -1187,7 +1193,7 @@ static DWORD WINAPI worker(LPVOID unused)
 {
     (void)unused;
     char name[64];
-    wsprintfA(name, "Local\\imgbotdx_%u", GetCurrentProcessId());
+    wsprintfA(name, OBF_SHM_FMT, GetCurrentProcessId());
     g_map = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, name);
     if (!g_map) return 1;
     g_hdr = (Header *)MapViewOfFile(g_map, FILE_MAP_ALL_ACCESS, 0, 0, 0);
@@ -1364,11 +1370,21 @@ static LONG WINAPI veh(EXCEPTION_POINTERS *ep)
  * 更关键的是 x86 导出名不会被修饰成 DxInit@4。 */
 __declspec(dllexport) DWORD DxInit(void)
 {
+    obf_init();                                     /* 遮蔽串解码(先于一切使用) */
     DisableThreadLibraryCalls(g_self);
+    {
+        HMODULE u = GetModuleHandleA(OBF_USER32);
+        if (u) {
+            g_pGetAsyncKeyState =
+                (SHORT (WINAPI *)(int))GetProcAddress(u, OBF_GETASYNCKEYSTATE);
+            g_pGetGUIThreadInfo =
+                (BOOL (WINAPI *)(DWORD, void *))GetProcAddress(u, OBF_GETGUIThreadINFO);
+        }
+    }
     /* 进程级互斥体: 同一进程任意副本同时只允许一个 worker(宿主 attach 前会先
        BYE 掉旧实例, 正常轮不到这里撞锁; 撞锁=旧实例没退干净) */
     char lk[64];
-    wsprintfA(lk, "Local\\imgbotdx_%u_lk", GetCurrentProcessId());
+    wsprintfA(lk, OBF_MUTEX_FMT, GetCurrentProcessId());
     g_mutex = CreateMutexA(NULL, FALSE, lk);
     if (g_mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
         CloseHandle(g_mutex); g_mutex = NULL;
