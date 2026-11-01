@@ -80,6 +80,8 @@ SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_NOZORDER = 0x0004
 SW_RESTORE = 9
+SW_HIDE, SW_SHOWNOACTIVATE, SW_SHOWNA = 0, 4, 8
+SW_MINIMIZE, SW_MAXIMIZE, SW_SHOWMINNOACTIVE = 6, 3, 7
 
 
 def list_windows():
@@ -145,28 +147,30 @@ def set_window_state(hwnd: int, flag: int) -> bool:
     if flag == 0:
         return bool(u.PostMessageW(hwnd, 0x0010, 0, 0))          # WM_CLOSE
     if flag == 1:
+        root = u.GetAncestor(hwnd, 2) or hwnd       # GA_ROOT: 绑子窗时前台是主窗
         if u.IsIconic(hwnd):
             u.ShowWindow(hwnd, SW_RESTORE)
-        return bool(u.SetForegroundWindow(hwnd))
+        u.SetForegroundWindow(hwnd)                 # 返回值不可信(后台进程常 FALSE),
+        return u.GetForegroundWindow() == root      # 按实际激活态验收
     # ShowWindow 族返回值是"之前可见性"不是成败(隐藏窗 show 返回 0), 统一调完即 True
     if flag == 2:
-        u.ShowWindow(hwnd, 7)                                     # SW_SHOWMINNOACTIVE
+        u.ShowWindow(hwnd, SW_SHOWMINNOACTIVE)                                     # SW_SHOWMINNOACTIVE
         return True
     if flag == 3:
-        u.ShowWindow(hwnd, 6)                                     # SW_MINIMIZE
+        u.ShowWindow(hwnd, SW_MINIMIZE)                                     # SW_MINIMIZE
         _empty_working_set(hwnd)                                  # 大漠"释放内存"同款
         return True
     if flag == 4:
-        u.ShowWindow(hwnd, 3)                                     # SW_MAXIMIZE
+        u.ShowWindow(hwnd, SW_MAXIMIZE)                                     # SW_MAXIMIZE
         return True
     if flag == 5:
-        u.ShowWindow(hwnd, 4)                                     # SW_SHOWNOACTIVATE
+        u.ShowWindow(hwnd, SW_SHOWNOACTIVATE)                                     # SW_SHOWNOACTIVATE
         return True
     if flag == 6:
-        u.ShowWindow(hwnd, 0)                                     # SW_HIDE
+        u.ShowWindow(hwnd, SW_HIDE)                                     # SW_HIDE
         return True
     if flag == 7:
-        u.ShowWindow(hwnd, 8)                                     # SW_SHOWNA(不抢焦点)
+        u.ShowWindow(hwnd, SW_SHOWNA)                                     # SW_SHOWNA(不抢焦点)
         return True
     if flag in (8, 9):                                            # TOPMOST / NOTOPMOST
         return bool(u.SetWindowPos(hwnd, -1 if flag == 8 else -2, 0, 0, 0, 0,
@@ -183,7 +187,7 @@ def set_window_state(hwnd: int, flag: int) -> bool:
     if flag == 13:
         return _terminate_window_process(hwnd)
     if flag == 14:
-        u.FlashWindow(hwnd, 1)                                    # 返回值同 ShowWindow 坑
+        u.FlashWindow(hwnd, 1)    # 返回值="之前是否活动"不可验, 调完即 True(口径注明)
         return True
     raise ValueError(f"SetWindowState flag 超出大漠口径 0-14: {flag}")
 

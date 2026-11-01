@@ -34,12 +34,18 @@ def main():
                 continue
             out = claim.with_suffix(".out")
             print(f"跑 {claim.name}", flush=True)
-            r = subprocess.run([sys.executable, str(claim)], cwd=str(WORK.parent),
-                               capture_output=True, text=True,
-                               encoding="utf-8", errors="replace",
-                               timeout=600)
-            out.write_text(f"--- exit={r.returncode} ---\n"
-                           f"{r.stdout}\n{r.stderr}", encoding="utf-8")
+            try:
+                r = subprocess.run([sys.executable, str(claim)], cwd=str(WORK.parent),
+                                   capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace",
+                                   timeout=600)
+                out.write_text(f"--- exit={r.returncode} ---\n"
+                               f"{r.stdout}\n{r.stderr}", encoding="utf-8")
+            except subprocess.TimeoutExpired as e:
+                # job 卡死也要留下失败 .out 再继续吃下一个 —— 工蜂不死(曾因单 job
+                # 超时炸掉整个提权常驻, 后续 job 全部失联)
+                out.write_text(f"--- timeout(600s), killed ---\n"
+                               f"{e.stdout or ''}\n{e.stderr or ''}", encoding="utf-8")
             claim.unlink()
         time.sleep(0.3)
 

@@ -1,21 +1,22 @@
-/* kspoll.c — 键态钩子验收靶: 游戏型输入消费方(不看消息, 每帧轮询
- * GetAsyncKeyState/GetKeyState), 兼收 WM_KEYDOWN/WM_CHAR 计数。
+/* kspoll.c — 键态钩子+虚拟光标钩验收靶: 游戏型输入消费方(不看消息, 每帧轮询
+ * GetAsyncKeyState/GetKeyState/GetCursorPos), 兼收 WM_KEYDOWN/WM_CHAR 计数。
  * 计数器写在窗口标题里(宿主 GetWindowTextW 轮询读), 跑 60 秒退出:
  *   down=N  轮询看到 GetAsyncKeyState(0x8000 位) 次数  ← 只可能来自虚拟状态钩子
  *   latch=N 轮询看到 0x0001 位(按下未读) 次数          ← 读后清语义
  *   gks=N   轮询看到 GetKeyState(0x8000 位) 次数
  *   kd=N / char=N  wndproc 收到 WM_KEYDOWN / WM_CHAR 次数(消息配方+手动 Translate)
+ *   gcx=N / gcy=N  轮询 GetCursorPos 读到的光标(虚拟光标钩开着时=注入位)
  * zig cc -target x86-windows -luser32 编译(x86: 键态钩子热补丁仅 x86)。
  */
 #include <windows.h>
 
-static int g_down, g_latch, g_gks, g_kd, g_char;
+static int g_down, g_latch, g_gks, g_kd, g_char, g_gcx, g_gcy;
 
 static void publish(HWND h)
 {
-    wchar_t t[128];
-    wsprintfW(t, L"down=%d latch=%d gks=%d kd=%d char=%d",
-              g_down, g_latch, g_gks, g_kd, g_char);
+    wchar_t t[160];
+    wsprintfW(t, L"down=%d latch=%d gks=%d kd=%d char=%d gcx=%d gcy=%d",
+              g_down, g_latch, g_gks, g_kd, g_char, g_gcx, g_gcy);
     SetWindowTextW(h, t);
 }
 
@@ -39,6 +40,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         NULL, NULL, inst, NULL);
     DWORD tick0 = GetTickCount(), lastPub = 0;
     for (;;) {
+        POINT cp;
+        if (GetCursorPos(&cp)) { g_gcx = cp.x; g_gcy = cp.y; }
         SHORT a = GetAsyncKeyState(0x41);      /* 'A' */
         if (a & 0x8000) g_down++;
         if (a & 1) g_latch++;

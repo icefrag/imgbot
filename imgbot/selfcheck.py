@@ -560,6 +560,8 @@ def main():
 
     # ---- win32: 大漠窗口族(SetWindowState 0-14 口径 + EnumWindow 过滤位) ----
     from .win32.window import enum_windows_dm, set_window_state
+    from .dmsoft import DmSoft
+    dmw = DmSoft()
     vh5, cleanup5 = create_visible_window(120, 60, (30, 200, 90))
     try:
         assert set_window_state(vh5, 6) and not _user32.IsWindowVisible(vh5)
@@ -575,6 +577,25 @@ def main():
         assert vh5 in enum_windows_dm(0, "imgbot-selfcheck", "", 1 | 8), \
             "标题+可见过滤应枚举到自己"
         assert vh5 not in enum_windows_dm(0, "绝不存在的标题xyz", "", 1 | 8)
+        # filter 16/32/64: 最小化/最大化/弹出式状态位
+        assert set_window_state(vh5, 2) and _user32.IsIconic(vh5)
+        assert vh5 in enum_windows_dm(0, "", "", 16), "最小化窗应被 filter 16 命中"
+        assert set_window_state(vh5, 12)
+        assert set_window_state(vh5, 4) and _user32.IsZoomed(vh5)
+        assert vh5 in enum_windows_dm(0, "", "", 32), "最大化窗应被 filter 32 命中"
+        assert set_window_state(vh5, 12)
+        hpop = _user32.CreateWindowExW(0, "BUTTON", "imgbot-selfcheck",
+                                       0x80000000 | 0x10000000,  # WS_POPUP|WS_VISIBLE
+                                       5, 5, 60, 20, None, None, None, None)
+        try:
+            assert hpop and hpop in enum_windows_dm(0, "", "", 64), "弹出式窗应被 filter 64 命中"
+            assert vh5 not in enum_windows_dm(0, "", "", 64), "重叠窗不该进 filter 64"
+        finally:
+            _user32.DestroyWindow(hpop)
+        # DmSoft 层包装(大漠壳转发必须与 win32 底层同效)
+        assert dmw.SetWindowState(vh5, 6) == 1 and not _user32.IsWindowVisible(vh5)
+        assert dmw.SetWindowState(vh5, 7) == 1
+        assert str(vh5) in dmw.EnumWindow(0, "imgbot-selfcheck", "", 1 | 8)
         from .win32.window import pids_of_process
         assert pids_of_process("python") or pids_of_process("uv"), \
             "本进程名应能取到 pid 集"
@@ -586,12 +607,14 @@ def main():
     finally:
         cleanup5()
 
-    # ---- win32: LockInput(BlockInput; lock=1 需管理员, 不断言锁定结果只走通解锁) ----
+    # ---- win32: LockInput(BlockInput; lock=1 需管理员, 不断言锁定结果只走通解锁;
+    # 记账挂实例 —— 锁/解同一对象才有"真锁过"语义) ----
     from .dmsoft import DmSoft
+    dmli = DmSoft()
     try:
-        DmSoft().LockInput(1)
+        dmli.LockInput(1)
     finally:
-        assert DmSoft().LockInput(0) == 1
+        assert dmli.LockInput(0) == 1
 
     # ---- nav: 界面导航图(定位两层/BFS/自愈/迷路/打断, 离线 FakeOps) ----
     class FakeOps:

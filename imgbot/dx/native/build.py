@@ -40,6 +40,11 @@ def build(zig: str):
            "-luser32"]
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
+    # 注入判别探针(x86 only, 诊断用: 远程 LoadLibrary 后查模块落地)
+    cmd = [zig, "cc", "-target", "x86-windows", "-O2", "-s",
+           "-o", str(BIN / "inject_probe32.exe"), str(NATIVE / "inject_probe.c")]
+    print("+", " ".join(cmd))
+    subprocess.run(cmd, check=True)
     print("done ->", BIN)
 
 

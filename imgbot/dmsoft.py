@@ -13,8 +13,10 @@
 - display: "normal"(前台) / "gdi"/"gdi2"(PrintWindow 族) / "dx"*("dx","dx2",
   "dx.graphic.2d/3d/opengl" → 注入件; GL 已通, d3d9 在调试 → 明确报错)
 - mouse/keypad: "windows"* → PostMessage; "windows2"* → 潜影 dx 消息鼠标 +
-  GetCursorPos 虚拟光标锁(治"能移动不能点击"); "dx"* → 注入件; "normal" → SendInput
-  真事件(前台, 动真光标, 单开专用; 图色坐标仍统一客户区)
+  GetCursorPos 虚拟光标锁(治"点击处理读真实光标"类游戏 —— 备胎, 华夏不是这种);
+  "dx"* → 注入件(华夏实证配方: mouse="dx" + EnableFakeActive(1), 激活门槛型游戏
+  的点击解药, 2026-11-01 世界画面 8/8); "normal" → SendInput 真事件(前台, 动真
+  光标, 单开专用; 图色坐标仍统一客户区)
 颜色格式同大漠: "RRGGBB" 或 "RRGGBB-DRDGDB"(偏差), FindPic 的 delta_color 同。
 未实现的方法 raise NotImplementedError(带说明) —— 决策4: 明确错误优先。
 """
@@ -74,25 +76,13 @@ class DmSoft:
             else:
                 raise NotImplementedError(f"display 模式未实现: {display}")
             if mouse.startswith("dx") or keypad.startswith("dx"):
-                if self._dx is None:
-                    from .dx.host import DxHost
-                    self._dx = DxHost(self._win.pid())
-                    self._dx.bind()
-                from .dx.input import DxMouseKeyboard
-                self._dx.bind_input(hwnd)
-                self._dxmk = DxMouseKeyboard(self._dx, hwnd)
+                self._ensure_dxmk(hwnd)
             if mouse == "windows2":
                 # 大漠 windows2 缩写 = dx.mouse.position.lock.api|...|dx.mouse.state.message:
-                # dx 消息鼠标 + GetCursorPos 虚拟光标锁 —— 治"能移动不能点击"
-                # (游戏点击处理里读真实光标, 坐标对不上 → 忽略点击; 华夏坐实待记)。
+                # dx 消息鼠标 + GetCursorPos 虚拟光标锁 —— 治"点击处理读真实光标"
+                # 类(备胎; 华夏是激活门槛型, 用 mouse="dx"+EnableFakeActive, 见 AGENTS)。
                 if self._dxmk is None:
-                    if self._dx is None:
-                        from .dx.host import DxHost
-                        self._dx = DxHost(self._win.pid())
-                        self._dx.bind()
-                    from .dx.input import DxMouseKeyboard
-                    self._dx.bind_input(hwnd)
-                    self._dxmk = DxMouseKeyboard(self._dx, hwnd)
+                    self._ensure_dxmk(hwnd)
                 self._dx.mouse_lock(True)
             if mouse.startswith("windows"):
                 if self._dxmk is None and self._mk is None:
@@ -345,6 +335,16 @@ class DmSoft:
         return 1 if vision.is_display_dead(shot, timeout=t) else 0
 
     # ================= 键鼠 =================
+    def _ensure_dxmk(self, hwnd: int):
+        """dx 键鼠四件套: 建 DxHost(没有就 bind) → bind_input → DxMouseKeyboard。"""
+        if self._dx is None:
+            from .dx.host import DxHost
+            self._dx = DxHost(self._win.pid())
+            self._dx.bind()
+        from .dx.input import DxMouseKeyboard
+        self._dx.bind_input(hwnd)
+        self._dxmk = DxMouseKeyboard(self._dx, hwnd)
+
     def _mk_(self):
         if self._dxmk is not None:
             return self._dxmk

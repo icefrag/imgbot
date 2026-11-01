@@ -99,7 +99,7 @@ def main() -> int:
             dm.KeyPress(VK_W); time.sleep(0.8)
         cv2.imwrite(r"logs\huaxia_w.png", b.astype(np.uint8))
 
-        # 2) 鼠标: windows2 地面点击 → 人物走过去(持续+持久双大)
+        # 2) 鼠标: dx+假激活 地面点击 → 人物走过去(瞬时/持久任一大)
         time.sleep(0.8)
         a = cap()
         dm.MoveTo(*GROUND); time.sleep(0.3)
