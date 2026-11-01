@@ -593,6 +593,13 @@ def main():
         finally:
             _user32.DestroyWindow(hpop)
         # 子窗句柄置顶属调用方责任(库哑透传, 见 set_window_state 口径), 不设断言
+        # 拟人首击起点播种: 真实光标→客户区(窗外钳边), 不再恒 (0,0) 会话指纹
+        from .win32.input import MouseKeyboard as _MK
+        sx, sy, cw, ch = GameWindow(vh5).client_rect()
+        _user32.SetCursorPos(sx + cw // 2, sy + ch // 2)
+        assert _MK(GameWindow(vh5))._pos == (cw // 2, ch // 2), "窗内: 种子=光标落点"
+        _user32.SetCursorPos(sx - 50, sy - 50)          # 窗外左上 → 钳边
+        assert _MK(GameWindow(vh5))._pos == (0, 0), "窗外: 应钳到贴边"
         # DmSoft 层包装(大漠壳转发必须与 win32 底层同效)
         assert dmw.SetWindowState(vh5, 6) == 1 and not _user32.IsWindowVisible(vh5)
         assert dmw.SetWindowState(vh5, 7) == 1
@@ -728,14 +735,20 @@ def _check_no_swallowed_code():
 
 
 def _check_readme_api():
-    """README 能力清单的 API 必须真实存在(防文档漂移: 清单是给别的 AI 查用的, 写了没有的
-    API 比不写更糟)。README 在仓库根, 源码在 imgbot/。"""
+    """API 引用必须真实存在(防文档漂移: 清单是给别的 AI 查用的, 写了没有的 API
+    比不写更糟)。2026-11-01 README 重组后: README 只留简介/打包, 能力清单在
+    docs/api.md —— 正向引用两文件都查, 反向"漏列"查 docs/api.md 全文。"""
     import ctypes as _ct
     import inspect
-    readme = Path(__file__).resolve().parent.parent / "README.md"
-    if not readme.exists():          # 装成 wheel 后 README 不在包里, 跳过
+    root = Path(__file__).resolve().parent.parent
+    readme = root / "README.md"
+    api_doc = root / "docs" / "api.md"
+    if not readme.exists():          # 装成 wheel 后文档不在包里, 跳过
         return
     text = readme.read_text(encoding="utf-8")
+    assert api_doc.exists(), "docs/api.md 应与 README 同在(能力清单迁此)"
+    api_text = api_doc.read_text(encoding="utf-8")
+    both = text + "\n" + api_text
     from . import actions, adb, ime, nav, ocr, ops, readout, target, vision
     from .win32 import capture
     from .win32 import input as win_input
@@ -743,21 +756,21 @@ def _check_readme_api():
     modules = [vision, ocr, readout, actions, adb, ime, target, ops, nav,
                window, capture, win_input]
     # `模块.名` 形式(可带不带括号): 名必须真实可取(含 win32 子模块的写法)
-    # 模块名按 README 里的简称匹配: vision/ocr/readout/actions/adb/ime/target + win32 三件
+    # 模块名按文档里的简称匹配: vision/ocr/readout/actions/adb/ime/target + win32 三件
     by_name = {m.__name__.rsplit(".", 1)[-1]: m for m in modules}
     submodules = {"capture": capture, "input": win_input, "window": window}
     # 类名也算合法前缀(如 `Target.screenshot` 指的是 target 模块的类)
     class_names = {n for mod in modules for n, o in vars(mod).items() if inspect.isclass(o)}
-    for m, f in set(re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)\.([A-Za-z_][A-Za-z_0-9]*)`", text)):
-        if f.endswith(".py"):
-            continue
+    for m, f in set(re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)\.([A-Za-z_][A-Za-z_0-9]*)`", both)):
+        if f in ("py", "md", "toml", "exe", "dll", "whl", "apk", "png", "bmp"):
+            continue                 # 文件名引用(如 `GLOSSARY.md`): 点是分隔符, f=扩展名
         mod = submodules.get(m) or by_name.get(m)
         if mod is None:
             if m == "imgbot" or m in class_names:
                 continue      # 包路径 / 类名引用
-            raise AssertionError(f"README 引用了未知模块: {m}")
+            raise AssertionError(f"文档引用了未知模块: {m}")
         if not hasattr(mod, f):
-            raise AssertionError(f"README 引用了不存在的 API: {m}.{f}")
+            raise AssertionError(f"文档引用了不存在的 API: {m}.{f}")
     # 裸函数名写法 `name(` 也必须真实存在(清单里大量是裸名)
     # 只认**模块级**函数/类 —— 类的方法名(如 screenshot/tap)也是合法裸名, 不在此列
     known = set()
@@ -767,15 +780,12 @@ def _check_readme_api():
     for mod in modules:
         for cls in [o for o in vars(mod).values() if inspect.isclass(o)]:
             known |= set(vars(cls).keys())     # 类的方法/属性名也算已知
-    for f in set(re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)\(", text)):
+    for f in set(re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)\(", both)):
         if f not in known:
-            raise AssertionError(f"README 引用了不存在的函数: {f}")
-    # 各模块**自己定义**的公开名(函数/类)都应出现在 README 的能力清单段内
-    # (只查清单段: 其它章节提到名字不算数, 否则"漏列"检不出来)
-    start = text.find("## 能力清单")
-    end = text.find("## 色键模板约定")
-    assert start >= 0 and end > start, "README 缺能力清单段"
-    catalog = text[start:end]
+            raise AssertionError(f"文档引用了不存在的函数: {f}")
+    # 各模块**自己定义**的公开名(函数/类)都应出现在 docs/api.md 能力清单内
+    # (全文都算清单段 —— README 只留简介, 漏列检不出才是问题)
+    catalog = api_text
     for mod in modules:
         for name, obj in vars(mod).items():
             if name.startswith("_") or not (inspect.isfunction(obj) or inspect.isclass(obj)):
@@ -785,7 +795,7 @@ def _check_readme_api():
             if inspect.isclass(obj) and issubclass(obj, _ct.Structure):
                 continue          # ctypes 结构体是内部实现细节, 不进能力清单
             if name not in catalog:
-                raise AssertionError(f"README 能力清单漏了: {mod.__name__}.{name}")
+                raise AssertionError(f"api.md 能力清单漏了: {mod.__name__}.{name}")
 
 
 if __name__ == "__main__":

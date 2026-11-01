@@ -11,7 +11,7 @@ import ctypes
 import random
 import time
 
-from ..win32.input import human_path
+from ..win32.input import cursor_seed, human_path
 from ..win32.window import WindowLostError
 from .host import (KEY_CHAR, KEY_DOWN, KEY_UP, M_DBLCLK, M_LDOWN, M_LUP,
                    M_MDOWN, M_MOVE, M_MUP, M_RDOWN, M_RUP, M_WHEEL_DOWN,
@@ -27,7 +27,7 @@ class DxMouseKeyboard:
         self.hwnd = hwnd
         self.delay = inter_action_delay
         self.rng = rng or random.Random()
-        self._pos = (0, 0)
+        self._pos = cursor_seed(hwnd)   # 首击起点=真实光标(钳内), 非 (0,0) 会话指纹
 
     def _alive(self):
         if not ctypes.windll.user32.IsWindow(self.hwnd):

@@ -81,12 +81,28 @@ def human_path(x0, y0, x1, y1, rng, max_s=0.12):
     return out
 
 
+def cursor_seed(hwnd: int) -> tuple[int, int]:
+    """拟人首击起点播种: 真实光标位置换算到目标客户区并钳进区内(光标在窗外=
+    贴边, 恰似真人从窗外划入)。恒 (0,0) 起步是会话级指纹 —— 每个会话第一段
+    轨迹都精确起自窗口左上角, 反检测视角多会话一关联就穿帮。
+    退化: 窗口无效/零客户区(如 message-only)→ (0,0) 旧行为。"""
+    user32 = ctypes.windll.user32
+    pt = wt.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    user32.ScreenToClient(hwnd, ctypes.byref(pt))
+    rc = wt.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(rc))
+    x = min(max(pt.x, 0), max(rc.right - 1, 0))
+    y = min(max(pt.y, 0), max(rc.bottom - 1, 0))
+    return x, y
+
+
 class MouseKeyboard:
     def __init__(self, window, inter_action_delay=0.05, rng=None):
         self.window = window
         self.delay = inter_action_delay
         self.rng = rng or random.Random()
-        self._pos = (0, 0)      # 上次光标位置, 平滑移动的插值起点
+        self._pos = cursor_seed(window.hwnd)   # 首击起点=真实光标(钳内), 非 (0,0) 指纹
 
     def _ensure_alive(self):
         if not self.window.is_alive():

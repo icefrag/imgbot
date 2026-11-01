@@ -177,6 +177,7 @@
 | `window.pids_of_process(name)` | 按进程名(exe, 可不带后缀)取 pid 集(EnumWindowByProcess 用) |
 | `window.unlock_process_dacl(pid)` | OWNER 解封护甲进程锁([盾]类 DACL→Everyone 全权; DxHost.bind 注入被拒时自动做) |
 | `input.human_path(x0, y0, x1, y1, rng, max_s=0.12)` | 拟人轨迹计算(纯函数, 可测) |
+| `input.cursor_seed(hwnd)` | 拟人首击起点播种: 真实光标→客户区并钳内(窗外=贴边); 两键鼠类构造自动用, 防会话指纹 |
 
 异常类: `window.UipiError`(目标权限高于本进程, 需管理员同级)、`window.WindowLostError`(窗口被关/句柄过期)、
 `capture.CaptureError`(截图失败: 窗口无效/客户区 0)。
@@ -215,7 +216,7 @@ RGBA(alpha=掩码), `find`/`find_all` 对键控模板只比对非底色笔画 �
 | FindStr | `ocr.find_text` / `find_texts`(字库被 RapidOCR 替代) |
 | MoveTo/LeftClick(后台) | `win32.input.MouseKeyboard`(贝塞尔拟人轨迹) |
 | SendString / SendPaste | `type_text`(WM_CHAR / ADBKeyboard) / `send_paste`; 老 ANSI 窗口打不进字换 `send_ime_string`(WM_IME_CHAR, 大漠 SendString 真身配方) |
-| BindWindow(display,mouse,keypad) | `Win32Target(hwnd, capture=…, input=…)` / `AdbTarget(serial)`; 大漠全词汇壳 `DmSoft.BindWindow`(gdi/dx/windows/normal/windows2, 详见 dmsoft.py 头注释) |
+| BindWindow(display,mouse,keypad) | `Win32Target(hwnd, capture=…, input=…)` / `AdbTarget(serial)`; 大漠全词汇壳 **DmSoft.BindWindow**(gdi/dx/windows/normal/windows2, 详见 dmsoft.py 头注释) |
 | FindWindow / EnumWindow | `win32.window.GameWindow.find`(类名/标题) / `enum_windows_dm`+`pids_of_process`(大漠 filter 位口径) |
 | SetWindowState | `win32.window.set_window_state`(大漠 0-14 口径: 激活/隐藏/置顶/禁用/强杀…) |
 | LockInput | **DmSoft.LockInput**(BlockInput, 锁定需管理员) |
