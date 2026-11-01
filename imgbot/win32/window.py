@@ -170,25 +170,21 @@ def set_window_state(hwnd: int, flag: int) -> bool:
     5=恢复(不激活) 6=隐藏 7=显示(不抢焦点) 8=置顶 9=取消置顶
     10=禁用 11=解除禁用 12=恢复并激活 13=强杀所在进程 14=闪烁标题栏
 
-    激活/置顶/最小化族是顶层窗口专属语义: 传子窗口句柄时自动取根(GetAncestor
-    GA_ROOT) —— 这些操作对子窗句柄是静默无效, 取根才是调用方显然的意图。
-    0/6/7/10/11 例外不取根(关闭/隐藏/显示/禁用族对子窗本就合法, 原样操作;
-    传错句柄是调用方的 bug, 库不猜)。
+    激活/置顶/最小化族是顶层窗口语义: 子窗句柄对它们是静默无效 —— 调用方
+    自行取根(GetAncestor GA_ROOT)再传, 库层保持大漠式哑透传不猜
+    (2026-11-01 裁定: 取根是应用层的责任)。
     """
     u = user32
     if not u.IsWindow(hwnd):
         return False
-    if flag in (1, 2, 3, 4, 5, 8, 9, 12, 14):
-        root = u.GetAncestor(hwnd, 2)              # GA_ROOT: 子窗句柄 -> 最外层窗口
-        if root:
-            hwnd = root
     if flag == 0:
         return bool(u.PostMessageW(hwnd, 0x0010, 0, 0))          # WM_CLOSE
     if flag == 1:
+        root = u.GetAncestor(hwnd, 2) or hwnd       # GA_ROOT: 绑子窗时前台是主窗
         if u.IsIconic(hwnd):
             u.ShowWindow(hwnd, SW_RESTORE)
         u.SetForegroundWindow(hwnd)                 # 返回值不可信(后台进程常 FALSE),
-        return u.GetForegroundWindow() == hwnd      # 按实际激活态验收
+        return u.GetForegroundWindow() == root      # 按实际激活态验收
     # ShowWindow 族返回值是"之前可见性"不是成败(隐藏窗 show 返回 0), 统一调完即 True
     if flag == 2:
         u.ShowWindow(hwnd, SW_SHOWMINNOACTIVE)                                     # SW_SHOWMINNOACTIVE

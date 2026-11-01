@@ -592,16 +592,7 @@ def main():
             assert vh5 not in enum_windows_dm(0, "", "", 64), "重叠窗不该进 filter 64"
         finally:
             _user32.DestroyWindow(hpop)
-        # 子窗口句柄: 置顶/激活族自动取根(GA_ROOT) —— 子句柄直接调 SetWindowPos 无效
-        hchild = _user32.CreateWindowExW(0, "BUTTON", "imgbot-selfcheck-child",
-                                         0x40000000 | 0x10000000,  # WS_CHILD|WS_VISIBLE
-                                         2, 2, 40, 18, vh5, None, None, None)
-        try:
-            assert hchild and set_window_state(hchild, 8), "子窗置顶应按根窗生效"
-            assert _user32.GetWindowLongW(vh5, -20) & 0x8, "TOPMOST 应落在根窗上"
-            assert set_window_state(hchild, 9) and not (_user32.GetWindowLongW(vh5, -20) & 0x8)
-        finally:
-            _user32.DestroyWindow(hchild)
+        # 子窗句柄置顶属调用方责任(库哑透传, 见 set_window_state 口径), 不设断言
         # DmSoft 层包装(大漠壳转发必须与 win32 底层同效)
         assert dmw.SetWindowState(vh5, 6) == 1 and not _user32.IsWindowVisible(vh5)
         assert dmw.SetWindowState(vh5, 7) == 1
