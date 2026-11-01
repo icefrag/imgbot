@@ -5,8 +5,10 @@
 1. [盾]登录器给 game.exe 挂进程 DACL 拒注入权 → OWNER WRITE_DAC 改写成 Everyone
    全权解封(本脚本自动做, 幂等);
 2. 游戏提权运行(HIGH IL) → 本脚本必须提权跑(普通权限 PostMessage 全 err5);
-3. "鼠标能移动不能点击" → 根因=点击处理有窗口激活门槛 → mouse="dx" +
-   dm.EnableFakeActive(1) 假激活(2026-11-01 世界画面实测 8/8 走路; 光标锁/键态钩均不需要).
+3. "鼠标能移动不能点击" → 根因=点击处理有窗口激活门槛 → mouse="dx"(2026-11-01
+   起自动武装大漠"常用 dx 鼠标属性"全家桶: 键态/光标锁/GetCapture/GetCursorInfo/
+   ClipCursor/取消息层位置钉死 + PostMessage 队列交付) + dm.EnableFakeActive(1)
+   ——三件缺一不可(缺假激活时被"后台节流冻结帧"污染判读, 实测 0-1/6; 齐 6/6)。
 
 验收判读全自动: 前后截图 diff(W 键=技能窗开, 大 diff; 地面点击=人物走路,
 持续 diff)。用法: 管理员终端 uv run scripts/huaxia_smoke.py
@@ -60,8 +62,8 @@ def main() -> int:
 
     dm = DmSoft()
     dm.BindWindow(win.hwnd, "gdi", "dx", "windows", 0)
-    dm.EnableFakeActive(1)          # 华夏定论配方: dx 消息鼠标+假激活(2026-11-01 实测)
-    print("绑定: display=gdi mouse=dx keypad=windows + EnableFakeActive")
+    dm.EnableFakeActive(1)          # 华夏定论配方: dx 全家桶+假激活(2026-11-01 终验 6/6)
+    print("绑定: display=gdi mouse=dx(全家桶) keypad=windows + EnableFakeActive")
 
     def cap():
         return capture_client(win).astype(int)

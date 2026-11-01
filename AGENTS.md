@@ -121,22 +121,25 @@
   user32!GetKeyState/GetAsyncKeyState 喂虚拟按住态(大漠同机制, x86 专用),
   验收 scripts/dx_keystate_smoke.py; DirectInput 游戏还需 dinput8!GetDeviceState
   钩子(留位未实现)。
-- **"鼠标能移动不能点击"类目标**(华夏世界画面, 2026-11-01 全量实验后修正):
-  华夏世界点击有激活门槛, 但**比消息级/API级假激活更深** —— 潜影已实现双级
-  假激活(EnableFakeActive = 消息吞失焦 + API 锁: GetForegroundWindow/
-  GetActiveWindow/GetFocus 槽补丁 + GetGUIThreadInfo 输出改写, Win10 x86
-  实测三查询全被改写), 加键态钩+光标锁+send/post 双路+先激活后布防全组合,
-  真后台点击仍**无规律偶发**(同配置时走时不走; 判读必须像素计数)。
-  最可能根因: 游戏轮询激活态绕过 user32 直查内核(win32k 直 syscall), 用户态
-  钩子原理性盖不住。⚠ 早前"dx+EnableFakeActive 8/8 走路"结论**作废**(实验被
-  前台污染: 成功批次游戏全程真前台)。**当前可靠结论**: 键盘后台✅/图色后台✅/
-  登录界面点击后台✅/世界画面点击**前台可用**(游戏激活时 dx/normal 都 100%),
-  世界画面真后台点击=未攻克(需要前台模式或等内核级方案)。
-  通用备胎仍留: `DxHost.mouse_lock()` 与 `mouse="windows2"`(治点击读真实光标类)。
+- **"鼠标能移动不能点击"类目标 —— 华夏世界画面已攻破(2026-11-01 终版)**:
+  解法三件套, 缺一不可: ①`mouse="dx"` 自动武装大漠"常用 dx 鼠标属性"全家桶
+  (键态+光标锁+GetCapture 虚拟化+GetCursorInfo 改写+ClipCursor 吞噬+取消息层
+  位置钉死, `DxHost.mouse_pack()`, 反编译 7.2319 组件逐钩对齐); ②`dm.EnableFakeActive(1)`
+  (消息级+API 级双锁, 游戏自认激活); ③dx 鼠标主交付=PostMessage 进真队列
+  (大漠 0x838 默认路径, 二次反编译定案; 直呼 wndproc 是变体 —— 队列交付游戏泵/
+  GetMessagePos 才看得到事件)。终验 **6/6×2**(DxHost 裸链 + DmSoft 用户面,
+  前台=记事本, 走路 7.5w-12.9w 像素/击)。三条翻案教训: (a) 早前"8/8"作废系
+  前台污染; (b) "无规律偶发"一半是**判读被后台节流冻结帧污染**(见下条);
+  (c) 大漠本尊同机同窗对照也只有 1/6(新鲜绑定第一击易中) —— "大漠可以我们
+  不行"先拉大漠上靶场对照再信。通用备胎仍留: `DxHost.mouse_lock()` 与
+  `mouse="windows2"`(治点击读真实光标类)。
 - **判读尺陷阱(实测踩过)**: 自动判"点击有没有反应"别用全帧均值 diff ——
   大静态背景会把局部大变化稀释到 2-3(华夏软键盘面板开合 17k 像素, 均值才 2.9,
   一度全军误判"点击无效")。用**变化像素计数**(灰差>30 的像素数), 局部 UI 变化
-  阈值 ~3000px; 双击 toggle 类动作会开+关抵消归零, 换单击验证。
+  阈值 ~3000px; 双击 toggle 类动作会开+关抵消归零, 换单击验证。**后半场新坑:
+  后台节流冻结帧** —— 游戏后台一段时间后停绘, 连续截图 diff 掉到常数小值
+  (~300), 点击可能已落地但画面不刷, 假阴性成片出现(华夏"偶发"真相之一半);
+  判后台点击先测静默帧活性, 冻结就先 EnableFakeActive 再判。
 - **华夏免费版私服(复古无锻造)四重墙实测(2026-10-31)**: ①客户端 32 位
   (*GodClass*, GDI 图色 OK); ②game.exe **自带进程护甲**(与[盾]登录器无关):
   DACL 拒 VM_READ/VM_OPERATION/CREATE_THREAD 但放行 0x400, 且**看门狗周期回挂**
@@ -149,19 +152,27 @@
   **干净靶技巧**: 直启第二实例 `game.exe OABWLV`(抄登录器令牌, 普通权限) =
   中等 IL 无墙靶(消息/截图/注入全通, 适合做配方实验室); 千万别点登录界面
   「进入游戏」(记住的账号会把你在线实例顶下线)。
-  **终验(2026-11-01, 世界画面在线实例)**: 键盘 windows 通道✅(W 13.1w 像素),
-  鼠标 `mouse="dx"`+`EnableFakeActive(1)`✅(地面点击走路 24.4w 像素, DmSoft
-  用户面 API 直测); 移动类操作点击前游戏必须在"自认激活"态, 否则全静默丢弃。
-  验收脚本 scripts/huaxia_smoke.py(管理员终端 `uv run scripts/huaxia_smoke.py`)。
+  **终验(2026-11-01, 世界画面在线实例, 两轮)**: 键盘 windows 通道✅(W 13.1w
+  像素); 鼠标 mouse="dx"(全家桶)+EnableFakeActive(1)✅ 真后台连击 **6/6×2**
+  (前台=记事本, 走路 7.5w-12.9w 像素/击); 大漠本尊同窗对照 1/6(佐证"偶发"
+  不是潜影独有)。验收脚本 scripts/huaxia_smoke.py(管理员终端
+  `uv run scripts/huaxia_smoke.py`)。
 - **大漠接口复刻补齐(2026-11-01)**: SetWindowState(0-14 官方口径, ShowWindow 族
   返回值="之前状态"不是成败/EnableWindow 返回"之前是否禁用"两个坑已绕)、
   EnumWindow 族(filter 位 1/2/8/16/32/64)、LockInput(BlockInput, 锁定需管理员,
   返回值按对象记账幂等化)、SendString ime=True(WM_IME_CHAR+GBK 大端打包, 消息级
   已验, 渲染级待 ANSI 靶校准)。未复刻保持显式 raise: 变速/驱动键鼠/内存族/字库。
-- **大漠键鼠反编译对照结论(2026-10-29, dm.dll 7.2642+组件 7.2319)**:
+- **大漠键鼠反编译对照结论(2026-10-29, dm.dll 7.2642+组件 7.2319; 11-01 二次反编译补)**:
   GetCursorPos=虚拟光标客户区坐标(已对齐, 真人动鼠标不影响读数);
   KeyPress 修饰键 L/R→通用 VK 归一化+虚拟 Alt 追踪(后续键转 SYSKEY, 已对齐
   dmcore do_key); MoveTo 越界客户区拒绝(已对齐 DmSoft.MoveTo);
+  **dx 鼠标主交付=PostMessageA 进队列**(0x838 命令处理器原文, SendMessageTimeout
+  只是配置变体; NCHITTEST/SETCURSOR 前戏两分支都是同步 Send; RIT 同步 0xFF/
+  0x12345679 由 dx.mouse.raw.input 属性门控, 未勾不做)——dmcore do_mouse 已按
+  此改队列交付; 组件解析的钩子面 = GetCapture/GetCursorInfo/ClipCursor/
+  PeekMessageA/W/GetMessagePos/ScreenToClient/GetClipBox/SendInput(真鼠标封锁),
+  其中 GetCapture/GetCursorInfo/ClipCursor/Peek/GetMessage 六件已进 mouse_pack,
+  GetMessagePos/GetClipBox/SendInput 封锁留位;
   **SendString 大漠真身是 WM_IME_CHAR(0x286)**(wParam=ANSI 字节大端打包,
   老 ANSI 窗口用), 我们 WM_CHAR UTF-16 —— 龙之谷打字不通时换这个配方;
   FindColor dir 1-7 扫描序未复刻(现只支持 0/取末位); 假激活深家族

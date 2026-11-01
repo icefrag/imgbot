@@ -6,7 +6,8 @@
 - 纯轮询: 宿主写 cmd+cmd_seq, DLL 执行后写 ack_result+ack_seq; 心跳=heartbeat
   计数持续增长; 帧=frame_seq 递增(BGRA/RGB8, 行序自底向上, 取出时翻正)。
 命令: PING=1 BYE=2 HOOK_GL=3 BIND=4 KEY=5 MOUSE=6 RAWINFO=7 FAKE_ACTIVE=8
-HIDE=9 HOOK_D3D9=10 KEYSTATE=11 MOUSE_LOCK=12。版本号(第2 DWORD)改协议必须两端同步+1。
+HIDE=9 HOOK_D3D9=10 KEYSTATE=11 MOUSE_LOCK=12 MOUSE_PACK=13。版本号(第2 DWORD)
+改协议必须两端同步+1(当前 8)。
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ FILE_MAP_ALL_ACCESS = 0xF001F
 CMD_PING, CMD_BYE, CMD_HOOK_GL = 1, 2, 3
 CMD_BIND, CMD_KEY, CMD_MOUSE = 4, 5, 6
 CMD_RAWINFO, CMD_FAKE_ACTIVE, CMD_HIDE, CMD_HOOK_D3D9 = 7, 8, 9, 10
-CMD_KEYSTATE, CMD_MOUSE_LOCK = 11, 12
+CMD_KEYSTATE, CMD_MOUSE_LOCK, CMD_MOUSE_PACK = 11, 12, 13
 KEY_DOWN, KEY_UP, KEY_CHAR = 0, 1, 2
 M_MOVE, M_LDOWN, M_LUP = 0, 1, 2
 M_RDOWN, M_RUP, M_MDOWN, M_MUP = 3, 4, 5, 6
@@ -48,6 +49,16 @@ HOOK_ERRORS = {
     75: "GetAsyncKeyState 无哨兵(x64)", 76: "蹦床分配失败", 77: "页保护失败",
     80: "user32 未加载", 81: "GetCursorPos 解析失败",
     82: "GetCursorPos 无哨兵(x64)", 83: "蹦床分配失败", 84: "页保护失败",
+    100: "user32 未加载(pack)", 110: "GetCapture 解析失败",
+    111: "GetCapture 前导形状不符", 112: "GetCapture 蹦床失败", 113: "GetCapture 页保护失败",
+    121: "GetCursorInfo 槽补丁失败", 122: "GetCursorInfo 非 FF25 thunk",
+    125: "ClipCursor 槽补丁失败", 126: "ClipCursor 非 FF25 thunk",
+    130: "PeekMessageW 解析失败", 131: "PeekMessageW 无哨兵", 132: "蹦床失败",
+    133: "页保护失败", 134: "PeekMessageA 解析失败", 135: "PeekMessageA 无哨兵",
+    136: "蹦床失败", 137: "页保护失败", 138: "GetMessageW 解析失败",
+    139: "GetMessageW 无哨兵", 140: "蹦床失败", 141: "页保护失败",
+    142: "GetMessageA 解析失败", 143: "GetMessageA 无哨兵", 144: "蹦床失败",
+    145: "页保护失败",
 }
 
 k32.CreateFileMappingW.restype = ctypes.c_void_p
@@ -105,7 +116,7 @@ class DxHost:
         if not self._view:
             raise OSError(f"MapViewOfFile 失败: {ctypes.get_last_error()}")
         struct.pack_into("<30I", (ctypes.c_char * SHM_SIZE).from_address(self._view),
-                         0, MAGIC, 7, *([0] * 28))
+                         0, MAGIC, 8, *([0] * 28))
         def inject_once():
             r = subprocess.run([str(self._injector), str(self.pid), str(self._dll)],
                                capture_output=True, text=True, timeout=30)
@@ -242,6 +253,15 @@ class DxHost:
         if rc != 0:
             raise RuntimeError(f"虚拟光标钩子失败 rc={rc}: {HOOK_ERRORS.get(rc, '未知')}")
         return rc
+
+    def mouse_pack(self, enable: bool = True) -> int:
+        """dx 鼠标全家桶(大漠"常用 dx 鼠标属性"7 属性预设): 键态+光标锁之上,
+        一键武装 GetCapture 虚拟化(input.lock)/GetCursorInfo 改写(cursor)/
+        ClipCursor 吞噬(clip.lock)/取消息层位置钉死(position.lock.message)。
+        rc=0 全装; 非 0=第一个失败钩(部分武装照常生效), hdr[17]=武装位图
+        (bit0 键态 bit1 光标 bit2 capture bit3 cursorinfo bit4 clip bit5-8
+        PeekW/PeekA/GetW/GetA)。仅 x86。"""
+        return self._cmd(CMD_MOUSE_PACK, 1 if enable else 0)
 
     def hook_auto(self) -> str:
         """按目标已加载的图形栈自动选钩子, 返回 'gl' / 'd3d9'; 失败抛 RuntimeError。"""

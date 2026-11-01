@@ -13,10 +13,11 @@
 - display: "normal"(前台) / "gdi"/"gdi2"(PrintWindow 族) / "dx"*("dx","dx2",
   "dx.graphic.2d/3d/opengl" → 注入件; GL 已通, d3d9 在调试 → 明确报错)
 - mouse/keypad: "windows"* → PostMessage; "windows2"* → 潜影 dx 消息鼠标 +
-  GetCursorPos 虚拟光标锁(治"点击处理读真实光标"类游戏 —— 备胎, 华夏不是这种);
-  "dx"* → 注入件(华夏实证配方: mouse="dx" + EnableFakeActive(1), 激活门槛型游戏
-  的点击解药, 2026-11-01 世界画面 8/8); "normal" → SendInput 真事件(前台, 动真
-  光标, 单开专用; 图色坐标仍统一客户区)
+  GetCursorPos 虚拟光标锁(大漠 windows2 缩写语义); "dx"* → 注入件全家桶
+  (消息配方 + 键态/光标锁/GetCapture 虚拟化/GetCursorInfo/ClipCursor/取消息层
+  位置钉死 = 大漠"常用 dx 鼠标属性"7 属性预设, 2026-11-01 对齐; 激活门槛型
+  游戏另配 EnableFakeActive(1) —— 华夏终验三件齐 6/6); "normal" → SendInput
+  真事件(前台, 动真光标, 单开专用; 图色坐标仍统一客户区)
 颜色格式同大漠: "RRGGBB" 或 "RRGGBB-DRDGDB"(偏差), FindPic 的 delta_color 同。
 未实现的方法 raise NotImplementedError(带说明) —— 决策4: 明确错误优先。
 """
@@ -88,7 +89,14 @@ class DmSoft:
                 if self._dxmk is None and self._mk is None:
                     self._mk = MouseKeyboard(self._win)
             elif mouse.startswith("dx"):
-                pass
+                # 大漠"常用 dx 鼠标属性"7 属性预设: 消息配方之外一键武装辅助钩
+                # 全家桶(键态/光标锁/GetCapture/GetCursorInfo/ClipCursor/消息位置
+                # 钉死) —— 2026-11-01 对齐。激活门槛型游戏另配 EnableFakeActive(1)
+                # (华夏终验: 全家桶+假激活+队列交付 三件齐 = 后台点击 6/6 确定性)。
+                # 部分钩挂不上不致命(大漠 per-property no-op 哲学), 码记 _last_error。
+                rc = self._dx.mouse_pack(True)
+                if rc:
+                    self._last_error = rc
             elif mouse == "normal":
                 if self._dxmk is None and self._mk is None:
                     from .win32.input import SendInputMouseKeyboard

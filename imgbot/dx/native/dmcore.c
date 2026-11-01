@@ -6,11 +6,17 @@
  * wgl 上下文劫持回读后台缓冲到共享内存。
  * 键鼠: CMD_KEY/CMD_MOUSE 按大漠 0x837/0x838 消息配方合成完整消息链
  * (NCHITTEST 前戏全操作+SETCURSOR 仅移动, 扫描码/扩展键/SYSKEY/滚轮屏幕坐标,
- * 焦点路由 GetGUIThreadInfo, RIT 同步 0xFF/魔数, 手动 TranslateMessage 补 WM_CHAR)。
+ * 焦点路由 GetGUIThreadInfo; 键=RIT 同步+SendMessageTimeout+手动 TranslateMessage
+ * 补 WM_CHAR; 鼠=PostMessage 进真队列 —— 2026-11-01 二次反编译定案, 队列交付
+ * 才能让游戏泵/GetMessagePos 看到事件, 直呼 wndproc 是大漠的变体不是默认)。
  * 键态: CMD_KEYSTATE 钩 user32!GetKeyState/GetAsyncKeyState(虚拟状态喂给
  * 轮询型输入游戏 —— 大漠键盘死案解法, 2026-10-29 反编译 7.2319 组件确认)。
  * 光标: CMD_MOUSE_LOCK 钩 user32!GetCursorPos 返回虚拟光标(大漠
  * dx.mouse.position.lock.api —— "能移动不能点击"的游戏在点击里读真光标)。
+ * 全家桶: CMD_MOUSE_PACK 一键武装 dx 鼠标辅助钩组团(键态+光标锁之上补
+ * GetCapture 虚拟化/GetCursorInfo 改写/ClipCursor 吞噬/取消息层位置钉死 ——
+ * 大漠"常用 dx 鼠标属性"7 属性预设的潜影对应物, 反编译 7.2319 组件对齐,
+ * 2026-11-01 华夏后台点击攻坚落地)。
  * 协议/布局见 host.py 头注释, 两端必须同步改。
  */
 #include <windows.h>
@@ -31,6 +37,7 @@
 #define CMD_HOOK_D3D9 10 /* d3d9 vtable 钩子(时机: 目标须在挂好后再调 Direct3DCreate9) */
 #define CMD_KEYSTATE 11  /* 钩 user32!GetKeyState/GetAsyncKeyState(x86 热补丁) */
 #define CMD_MOUSE_LOCK 12 /* 钩 user32!GetCursorPos 返回虚拟光标(大漠 dx.mouse.position.lock.api) */
+#define CMD_MOUSE_PACK 13 /* dx 鼠标全家桶: 大漠"常用 dx 鼠标属性"7 属性预设一键武装 */
 
 #define KEY_DOWN 0
 #define KEY_UP   1
@@ -148,7 +155,9 @@ static BYTE  g_orig5[5];
 static int hotpatch(BYTE *func, void *detour, BYTE **trampOut, BYTE *orig5)
 {
     static const BYTE expect[5] = {0x8B, 0xFF, 0x55, 0x8B, 0xEC};
-    if (memcmp(func, expect, 5) != 0) return 31;
+    /* 两种可搬前导(x86 user32 实测): ① 标准哨兵 ② a1 [abs32](mov eax,moffs)
+       —— GetCapture 前导, 整 5 字节无相对寻址, 同样可整搬蹦床 */
+    if (memcmp(func, expect, 5) != 0 && func[0] != 0xA1) return 31;
     BYTE *tramp = (BYTE *)VirtualAlloc(NULL, 16, MEM_COMMIT | MEM_RESERVE,
                                        PAGE_EXECUTE_READWRITE);
     if (!tramp) return 32;
@@ -527,9 +536,12 @@ static int do_mouse(DWORD arg0, DWORD op)
         SendMessageTimeoutW(g_hwnd, WM_SETCURSOR, (WPARAM)g_hwnd,
                             MAKELPARAM(1 /*HTCLIENT*/, WM_MOUSEMOVE),
                             SMTO_FLAGS, 2000, &res);
-    rit_sync(0x12345679);                          /* 大漠: raw input 线程排空(鼠) */
-    if (!SendMessageTimeoutW(focus_or_bound(), msg, wp, lp, SMTO_FLAGS, 2000, &res))
-        return 42;                                 /* 送达失败(超时/无效窗口) */
+    /* 主交付 = PostMessage 进真队列(2026-11-01 二次反编译 0x838 定案: 大漠默认
+       路径是 PostMessageA, SendMessageTimeout 只是配置变体)。队列交付让游戏
+       自己的 GetMessage 泵取消息 —— MSG.pt/GetMessagePos/队列时序全由 win32k
+       自然更新, 直呼 wndproc 永远做不到, 华夏"偶发"的根因面。 */
+    if (!PostMessageW(focus_or_bound(), msg, wp, lp))
+        return 42;                                     /* 投递失败(无效窗口) */
     return 0;
 }
 
@@ -931,6 +943,193 @@ static int fake_active(int enable)
     return 0;
 }
 
+/* ---- dx 鼠标全家桶(CMD_MOUSE_PACK): 大漠"常用 dx 鼠标属性"预设的潜影对应物。
+ * ---- 背景(2026-11-01 华夏攻坚): 大漠 BindWindowEx 鼠标串
+ * ---- position.lock.api|position.lock.message|clip.lock.api|input.lock.api|
+ * ---- state.api|mouse.api|cursor 勾选即后台可点(用户实测, 无假激活); 我们此前的
+ * ---- 消息配方(0x838)只覆盖 mouse.api 一件, 其余六件钩子缺位 → 后台点击偶发。
+ * ---- 反编译 7.2319 组件确认的钩子面: 键态(state.api)+光标锁(position.lock.api)
+ * ---- 复用现有钩, 本段补四件新钩:
+ * ----   input.lock: GetCapture 绑定期恒回绑窗(后台 GetCapture=NULL/别窗, 点门槛
+ * ----            型游戏按它丢弃点击 —— 登录UI不受影响、世界点击偶发的判据面)
+ * ----   cursor:    GetCursorInfo 光标位改写到虚拟光标
+ * ----   clip.lock: ClipCursor 吞噬(游戏锁不了真光标)
+ * ----   position.lock.message: 取消息层(Peek/GetMessage W/A)把真实鼠标消息的
+ * ----            位置钉死到虚拟光标 —— 真鼠标路过后台窗口不再把游戏悬停态带跑 ---- */
+static volatile LONG g_pack;                     /* 全家桶总闸 */
+
+static HWND (WINAPI *g_realGetCapture)(void);    /* GetCapture(热补丁, a1 形状) */
+static BYTE *g_gcFunc, *g_gcTramp;
+static BYTE  g_gcOrig[5];
+
+static HWND WINAPI our_getcapture(void)
+{
+    if (g_pack && g_hwnd && IsWindow(g_hwnd)) return g_hwnd;
+    return g_realGetCapture();
+}
+
+static DWORD *g_gciSlot;                         /* GetCursorInfo(FF25 槽 thunk) */
+static DWORD   g_gciOrig;
+
+static BOOL WINAPI our_getcursorinfo(PCURSORINFO pci)
+{
+    BOOL r = ((BOOL (WINAPI *)(PCURSORINFO))(DWORD_PTR)g_gciOrig)(pci);
+    if (g_pack && r && pci && pci->cbSize >= sizeof(CURSORINFO)
+        && g_hwnd && IsWindow(g_hwnd)) {
+        POINT p = { (LONG)g_vx, (LONG)g_vy };
+        ClientToScreen(g_hwnd, &p);
+        pci->ptScreenPos = p;
+    }
+    return r;
+}
+
+static DWORD *g_ccSlot;                          /* ClipCursor(FF25 槽 thunk) */
+static DWORD   g_ccOrig;
+
+static BOOL WINAPI our_clipcursor(const RECT *rc)
+{
+    if (g_pack && g_hwnd && IsWindow(g_hwnd)) return TRUE;   /* 吞: 后台不锁真光标 */
+    return ((BOOL (WINAPI *)(const RECT *))(DWORD_PTR)g_ccOrig)(rc);
+}
+
+static void pin_mouse_msg(MSG *m)
+{
+    if (!g_pack || !m || !m->hwnd || !g_hwnd || !IsWindow(g_hwnd)) return;
+    UINT t = m->message;
+    if (t < 0x200 || t > 0x20E) return;           /* WM_MOUSEFIRST..WM_MOUSELAST */
+    if (GetWindowThreadProcessId(m->hwnd, NULL)
+        != GetWindowThreadProcessId(g_hwnd, NULL)) return;   /* 只管绑定窗口线程 */
+    POINT sp = { (LONG)g_vx, (LONG)g_vy };
+    ClientToScreen(g_hwnd, &sp);
+    if (t == 0x020A || t == 0x020E) {             /* 滚轮: lParam=屏幕坐标 */
+        m->lParam = MAKELPARAM(sp.x, sp.y);
+    } else {
+        POINT cp = sp;
+        ScreenToClient(m->hwnd, &cp);             /* 其余: lParam=收件窗客户坐标 */
+        m->lParam = MAKELPARAM(cp.x, cp.y);
+    }
+    m->pt = sp;
+}
+
+static BYTE *g_msgFunc[4];                        /* 0=PeekW 1=PeekA 2=GetW 3=GetA */
+static BYTE  g_msgOrig[4][5];
+static BYTE *g_msgTramp[4];
+
+static BOOL WINAPI our_peek_w(LPMSG m, HWND h, UINT lo, UINT hi, UINT rm)
+{
+    BOOL r = ((BOOL (WINAPI *)(LPMSG, HWND, UINT, UINT, UINT))g_msgTramp[0])(
+        m, h, lo, hi, rm);
+    if (r) pin_mouse_msg(m);
+    return r;
+}
+static BOOL WINAPI our_peek_a(LPMSG m, HWND h, UINT lo, UINT hi, UINT rm)
+{
+    BOOL r = ((BOOL (WINAPI *)(LPMSG, HWND, UINT, UINT, UINT))g_msgTramp[1])(
+        m, h, lo, hi, rm);
+    if (r) pin_mouse_msg(m);
+    return r;
+}
+static BOOL WINAPI our_get_w(LPMSG m, HWND h, UINT lo, UINT hi)
+{
+    BOOL r = ((BOOL (WINAPI *)(LPMSG, HWND, UINT, UINT))g_msgTramp[2])(m, h, lo, hi);
+    if ((int)r > 0) pin_mouse_msg(m);
+    return r;
+}
+static BOOL WINAPI our_get_a(LPMSG m, HWND h, UINT lo, UINT hi)
+{
+    BOOL r = ((BOOL (WINAPI *)(LPMSG, HWND, UINT, UINT))g_msgTramp[3])(m, h, lo, hi);
+    if ((int)r > 0) pin_mouse_msg(m);
+    return r;
+}
+
+/* 一键武装: rc=0 全装; 非 0 = 第一个失败钩的码(部分武装照开闸, 容忍哲学同
+   hook_active_api)。arg1 = 武装位图: bit0 键态 bit1 光标锁 bit2 GetCapture
+   bit3 GetCursorInfo bit4 ClipCursor bit5 PeekW bit6 PeekA bit7 GetW bit8 GetA */
+static int hook_mouse_pack(void)
+{
+    if (g_pack) return 0;
+    if (!g_hdr) return 43;
+    if (!g_hwnd || !IsWindow(g_hwnd)) return 40;
+    HMODULE u = GetModuleHandleA("user32.dll");
+    if (!u) return 100;
+    DWORD bits = 0;
+    int fail = 0, rc;
+
+    rc = hook_keystate();
+    if (!rc) bits |= 1; else if (!fail) fail = rc;
+    rc = hook_mouse_lock();
+    if (!rc) bits |= 2; else if (!fail) fail = rc;
+
+    BYTE *f = (BYTE *)GetProcAddress(u, "GetCapture");
+    if (!f) { if (!fail) fail = 110; }
+    else {
+        rc = hotpatch(f, (void *)our_getcapture, &g_gcTramp, g_gcOrig);
+        if (rc) { g_gcTramp = NULL; if (!fail) fail = 111 + (rc - 31); }
+        else {
+            g_gcFunc = f;
+            g_realGetCapture = (HWND (WINAPI *)(void))g_gcTramp;
+            bits |= 4;
+        }
+    }
+
+    BYTE *gci = (BYTE *)GetProcAddress(u, "GetCursorInfo");
+    if (gci && gci[0] == 0xFF && gci[1] == 0x25) {
+        DWORD *slot = (DWORD *)(DWORD_PTR)*(DWORD *)(gci + 2);
+        if (slot && patch_slot(slot, (DWORD)(DWORD_PTR)our_getcursorinfo,
+                               &g_gciOrig) == 0) {
+            g_gciSlot = slot;
+            bits |= 8;
+        } else if (!fail) fail = 121;
+    } else if (!fail) fail = 122;
+
+    BYTE *cc = (BYTE *)GetProcAddress(u, "ClipCursor");
+    if (cc && cc[0] == 0xFF && cc[1] == 0x25) {
+        DWORD *slot = (DWORD *)(DWORD_PTR)*(DWORD *)(cc + 2);
+        if (slot && patch_slot(slot, (DWORD)(DWORD_PTR)our_clipcursor,
+                               &g_ccOrig) == 0) {
+            g_ccSlot = slot;
+            bits |= 0x10;
+        } else if (!fail) fail = 125;
+    } else if (!fail) fail = 126;
+
+    struct { const char *name; void *detour; } mtab[4] = {
+        {"PeekMessageW", (void *)our_peek_w},
+        {"PeekMessageA", (void *)our_peek_a},
+        {"GetMessageW",  (void *)our_get_w},
+        {"GetMessageA",  (void *)our_get_a},
+    };
+    for (int i = 0; i < 4; i++) {
+        BYTE *fm = (BYTE *)GetProcAddress(u, mtab[i].name);
+        if (!fm) { if (!fail) fail = 130 + i * 4; continue; }
+        rc = hotpatch(fm, mtab[i].detour, &g_msgTramp[i], g_msgOrig[i]);
+        if (rc) { g_msgTramp[i] = NULL; if (!fail) fail = 131 + i * 4 + (rc - 31); }
+        else { g_msgFunc[i] = fm; bits |= 0x20 << i; }
+    }
+
+    g_hdr->arg1 = bits;
+    if (fail) return fail;               /* 部分武装也开闸, 码透传宿主定夺 */
+    g_pack = 1;
+    return 0;
+}
+
+static void unhook_mouse_pack(void)
+{
+    g_pack = 0;
+    if (g_gcTramp) {
+        restore_hotpatch(g_gcFunc, g_gcOrig, g_gcTramp);
+        g_gcFunc = NULL; g_gcTramp = NULL; g_realGetCapture = NULL;
+    }
+    if (g_gciSlot) { patch_slot(g_gciSlot, g_gciOrig, &g_gciOrig); g_gciSlot = NULL; }
+    if (g_ccSlot)  { patch_slot(g_ccSlot, g_ccOrig, &g_ccOrig); g_ccSlot = NULL; }
+    for (int i = 0; i < 4; i++) {
+        if (!g_msgTramp[i]) continue;
+        restore_hotpatch(g_msgFunc[i], g_msgOrig[i], g_msgTramp[i]);
+        g_msgFunc[i] = NULL; g_msgTramp[i] = NULL;
+    }
+    unhook_mouse_lock();
+    unhook_keystate();
+}
+
 /* ---- 模块隐藏(大漠 dx.public.hide.dll 简版): 从 PEB->Ldr 三条链摘掉本模块。
  * ---- 摘链后 EnumProcessModules/Toolhelp 快照/进程内 GetModuleHandle 都找不到。 ---- */
 static int hide_module(void)
@@ -993,7 +1192,7 @@ static DWORD WINAPI worker(LPVOID unused)
     if (!g_map) return 1;
     g_hdr = (Header *)MapViewOfFile(g_map, FILE_MAP_ALL_ACCESS, 0, 0, 0);
     if (!g_hdr) { CloseHandle(g_map); g_map = NULL; return 2; }
-    if (g_hdr->magic != SHM_MAGIC || g_hdr->version != 7) {
+    if (g_hdr->magic != SHM_MAGIC || g_hdr->version != 8) {
         UnmapViewOfFile(g_hdr); CloseHandle(g_map);
         g_hdr = NULL; g_map = NULL;
         if (g_mutex) { CloseHandle(g_mutex); g_mutex = NULL; }
@@ -1008,8 +1207,7 @@ static DWORD WINAPI worker(LPVOID unused)
             BOOL quit = FALSE;
             switch (g_hdr->cmd) {
             case CMD_PING:    r = 0x50494731u; break;
-            case CMD_BYE:     unhook_gl(); unhook_d3d9(); unhook_keystate();
-                              unhook_mouse_lock();
+            case CMD_BYE:     unhook_gl(); unhook_d3d9(); unhook_mouse_pack();
                               fake_active(0);
                               g_hdr->state = 0; r = 0;
                               quit = TRUE; break;
@@ -1019,6 +1217,10 @@ static DWORD WINAPI worker(LPVOID unused)
             case CMD_MOUSE_LOCK:
                               if (g_hdr->arg0) r = (DWORD)hook_mouse_lock();
                               else { unhook_mouse_lock(); r = 0; }
+                              break;
+            case CMD_MOUSE_PACK:
+                              if (g_hdr->arg0) r = (DWORD)hook_mouse_pack();
+                              else { unhook_mouse_pack(); r = 0; }
                               break;
             case CMD_FAKE_ACTIVE: r = (DWORD)fake_active((int)g_hdr->arg0); break;
             case CMD_HIDE:    r = (DWORD)hide_module(); break;
