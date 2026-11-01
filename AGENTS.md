@@ -221,4 +221,4 @@
 
 ### Domain docs
 
-单上下文: 根 GLOSSARY.md(潜影等术语)+ docs/adr/(0001-dm-dx-channel)。See `docs/agents/domain.md`.
+单上下文: 根 GLOSSARY.md(潜影等术语)+ docs/adr/(0001-dm-dx-channel)+ docs/api.md(按模块 API 速查/大漠对照, 原 README 能力清单迁此)。See `docs/agents/domain.md`.
