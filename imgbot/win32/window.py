@@ -131,6 +131,164 @@ def is_elevated():
     return bool(ctypes.WinDLL("shell32").IsUserAnAdmin())
 
 
+# ---- 大漠 SetWindowState 0-14 口径(官方参数表对齐) ----
+def set_window_state(hwnd: int, flag: int) -> bool:
+    """窗口状态操作(大漠 SetWindowState 同表)。
+
+    0=关闭 1=激活 2=最小化(不激活) 3=最小化+释放内存 4=最大化(激活)
+    5=恢复(不激活) 6=隐藏 7=显示(不抢焦点) 8=置顶 9=取消置顶
+    10=禁用 11=解除禁用 12=恢复并激活 13=强杀所在进程 14=闪烁标题栏
+    """
+    u = user32
+    if not u.IsWindow(hwnd):
+        return False
+    if flag == 0:
+        return bool(u.PostMessageW(hwnd, 0x0010, 0, 0))          # WM_CLOSE
+    if flag == 1:
+        if u.IsIconic(hwnd):
+            u.ShowWindow(hwnd, SW_RESTORE)
+        return bool(u.SetForegroundWindow(hwnd))
+    # ShowWindow 族返回值是"之前可见性"不是成败(隐藏窗 show 返回 0), 统一调完即 True
+    if flag == 2:
+        u.ShowWindow(hwnd, 7)                                     # SW_SHOWMINNOACTIVE
+        return True
+    if flag == 3:
+        u.ShowWindow(hwnd, 6)                                     # SW_MINIMIZE
+        _empty_working_set(hwnd)                                  # 大漠"释放内存"同款
+        return True
+    if flag == 4:
+        u.ShowWindow(hwnd, 3)                                     # SW_MAXIMIZE
+        return True
+    if flag == 5:
+        u.ShowWindow(hwnd, 4)                                     # SW_SHOWNOACTIVATE
+        return True
+    if flag == 6:
+        u.ShowWindow(hwnd, 0)                                     # SW_HIDE
+        return True
+    if flag == 7:
+        u.ShowWindow(hwnd, 8)                                     # SW_SHOWNA(不抢焦点)
+        return True
+    if flag in (8, 9):                                            # TOPMOST / NOTOPMOST
+        return bool(u.SetWindowPos(hwnd, -1 if flag == 8 else -2, 0, 0, 0, 0,
+                                   0x0001 | 0x0002 | 0x0010))     # NOMOVE|NOSIZE|NOACTIVATE
+    if flag == 10:
+        u.EnableWindow(hwnd, 0)        # 返回值="之前是否禁用"(MSDN 坑), 按结果验收
+        return not bool(u.IsWindowEnabled(hwnd))
+    if flag == 11:
+        u.EnableWindow(hwnd, 1)
+        return bool(u.IsWindowEnabled(hwnd))
+    if flag == 12:
+        u.ShowWindow(hwnd, SW_RESTORE)
+        return True
+    if flag == 13:
+        return _terminate_window_process(hwnd)
+    if flag == 14:
+        u.FlashWindow(hwnd, 1)                                    # 返回值同 ShowWindow 坑
+        return True
+    raise ValueError(f"SetWindowState flag 超出大漠口径 0-14: {flag}")
+
+
+def _empty_working_set(hwnd: int):
+    """把目标进程工作集裁掉(大漠 flag=3 的'释放内存')。失败静默(权限/进程已退)。"""
+    pid = wt.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = kernel32.OpenProcess(0x0100 | 0x0400, False, pid.value)   # SET_QUOTA|QUERY
+    if h:
+        kernel32.SetProcessWorkingSetSize(h, -1, -1)
+        kernel32.CloseHandle(h)
+
+
+def _terminate_window_process(hwnd: int) -> bool:
+    pid = wt.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = kernel32.OpenProcess(0x0001 | 0x0400, False, pid.value)   # TERMINATE|QUERY
+    if not h:
+        return False
+    try:
+        return bool(kernel32.TerminateProcess(h, 1))
+    finally:
+        kernel32.CloseHandle(h)
+
+
+# ---- 大漠 EnumWindow 族(filter 位: 1 标题 2 类名 8 可见 16 最小化 32 最大化 64 弹出式) ----
+def enum_windows_dm(parent: int = 0, title: str = "", class_name: str = "",
+                    filter_: int = 0, pids: set | None = None) -> list[int]:
+    """枚举窗口(大漠 EnumWindow 语义: 标题/类名模糊匹配, filter 决定哪些条件生效)。
+
+    parent=0 枚举顶层, 非 0 枚举其子窗口; pids 非空时按进程集过滤(ByProcess 用)。
+    """
+    out: list[int] = []
+
+    def _title_of(h):
+        n = user32.GetWindowTextLengthW(h)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        if n:
+            user32.GetWindowTextW(h, buf, n + 1)
+        return buf.value
+
+    @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+    def on_window(h, _):
+        if filter_ & 8 and not user32.IsWindowVisible(h):
+            return True
+        if filter_ & 16 and not user32.IsIconic(h):
+            return True
+        if filter_ & 32 and not user32.IsZoomed(h):
+            return True
+        if filter_ & 64:
+            style = user32.GetWindowLongW(h, -16)                 # GWL_STYLE
+            if not style & 0x80000000:                            # WS_POPUP
+                return True
+        if pids is not None:
+            pid = wt.DWORD()
+            user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+            if pid.value not in pids:
+                return True
+        if filter_ & 1 and title and title.lower() not in _title_of(h).lower():
+            return True
+        if filter_ & 2 and class_name:
+            cname = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(h, cname, 256)
+            if class_name.lower() not in cname.value.lower():
+                return True
+        out.append(h)
+        return True
+
+    if parent:
+        user32.EnumChildWindows(parent, on_window, 0)
+    else:
+        user32.EnumWindows(on_window, 0)
+    return out
+
+
+def pids_of_process(process_name: str) -> set[int]:
+    """按进程名(exe, 大小写不敏感, 可不带 .exe)取 pid 集 —— EnumWindowByProcess 用。"""
+    snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)              # TH32CS_SNAPPROCESS
+    if snap in (0, -1):
+        return set()
+    want = process_name.lower()
+    if not want.endswith(".exe"):
+        want += ".exe"
+
+    class PE32(ctypes.Structure):
+        _fields_ = [("dwSize", wt.DWORD), ("cntUsage", wt.DWORD),
+                    ("th32ProcessID", wt.DWORD), ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                    ("th32ModuleID", wt.DWORD), ("cntThreads", wt.DWORD),
+                    ("th32ParentProcessID", wt.DWORD), ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wt.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+    e = PE32()
+    e.dwSize = ctypes.sizeof(PE32)
+    pids = set()
+    if kernel32.Process32FirstW(snap, ctypes.byref(e)):
+        while True:
+            if e.szExeFile.lower() == want:
+                pids.add(e.th32ProcessID)
+            if not kernel32.Process32NextW(snap, ctypes.byref(e)):
+                break
+    kernel32.CloseHandle(snap)
+    return pids
+
+
 def ensure_dpi_aware():
     """DPI 感知, 幂等。按优先级尝试 Per-Monitor V2 -> Per-Monitor -> System。"""
     try:

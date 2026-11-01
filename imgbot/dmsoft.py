@@ -52,6 +52,7 @@ class DmSoft:
         self._dxmk = None                          # dx 通道键鼠
         self._display = None
         self._last_error = 0
+        self._input_locked = False
 
     # ================= 后台设置: 绑定族(8) =================
     def BindWindow(self, hwnd: int, display: str, mouse: str, keypad: str,
@@ -164,7 +165,17 @@ class DmSoft:
         return 1
 
     def LockInput(self, lock: int) -> int:
-        raise NotImplementedError("LockInput(禁止外部输入)未实现")
+        """锁定/解锁物理键鼠输入(BlockInput, 锁定需管理员; 目标提权时宿主本就同级)。
+        多开跑图防真人误碰用。BlockInput 返回值="确实改变状态", 无锁可解时也返 0
+        —— 按本对象记账幂等化: 没锁过就解锁返回 1。"""
+        import ctypes
+        ok = bool(ctypes.windll.user32.BlockInput(bool(lock)))
+        if lock:
+            self._input_locked = ok
+            return 1 if ok else 0
+        was = self._input_locked
+        self._input_locked = False
+        return 1 if (ok or not was) else 0
 
     def LockDisplay(self, lock: int) -> int:
         raise NotImplementedError("LockDisplay(锁定图色不刷新)未实现")
@@ -493,10 +504,17 @@ class DmSoft:
             time.sleep(delay / 1000)
         return 1
 
-    def SendString(self, hwnd: int, str_: str):
+    def SendString(self, hwnd: int, str_: str, ime: bool = False):
         """向指定窗口打字(与绑定通道无关, 大漠语义)。三条键鼠通道都实现
-        type_text; 未绑定(全 None)显式报错而非裸崩。"""
-        if self._dxmk is not None:
+        type_text; 未绑定(全 None)显式报错而非裸崩。
+        ime=True 切大漠 SendString 真身配方(WM_IME_CHAR, GBK 字节大端打包) ——
+        老 ANSI 窗口(龙之谷类)WM_CHAR 打不进字时用。"""
+        if ime:
+            if self._win is None:
+                raise RuntimeError("未 BindWindow, 无窗口可投 WM_IME_CHAR")
+            from .win32.input import send_ime_string
+            send_ime_string(self._win, str_)
+        elif self._dxmk is not None:
             self._dxmk.type_text(str_)
         elif self._mk is not None:
             self._mk.type_text(str_)             # 前台: SendInput UNICODE 注字符
@@ -569,6 +587,39 @@ class DmSoft:
         import ctypes
         ctypes.windll.user32.SetWindowPos(hwnd, None, x, y, 0, 0, 0x0001 | 0x0004)
         return 1
+
+    def SetWindowState(self, hwnd: int, flag: int) -> int:
+        """窗口状态操作(大漠 0-14 口径: 0 关闭/1 激活/2 最小化/3 最小化+释放内存/
+        4 最大化/5 恢复不激活/6 隐藏/7 显示/8 置顶/9 取消置顶/10 禁用/11 解禁/
+        12 恢复并激活/13 强杀进程/14 闪烁)。目标提权时本进程须同级(UIPI)。"""
+        from .win32.window import set_window_state
+        return 1 if set_window_state(hwnd, flag) else 0
+
+    def EnumWindow(self, parent: int, title: str, class_name: str,
+                   filter_: int) -> str:
+        """枚举窗口(parent=0 顶层, 否则枚举子窗口), 返回 "hwnd,hwnd,..."(无匹配空串)。
+        标题/类名模糊匹配; filter 位: 1 标题 2 类名 8 可见 16 最小化 32 最大化
+        64 弹出式(大漠口径, 可加法组合如 1+2+8)。"""
+        from .win32.window import enum_windows_dm
+        return ",".join(str(h) for h in
+                        enum_windows_dm(parent, title, class_name, filter_))
+
+    def EnumWindowByProcess(self, process_name: str, title: str,
+                            class_name: str, filter_: int) -> str:
+        """按进程名(如 "game.exe")枚举其所有窗口, 语义同 EnumWindow。"""
+        from .win32.window import enum_windows_dm, pids_of_process
+        pids = pids_of_process(process_name)
+        if not pids:
+            return ""
+        return ",".join(str(h) for h in
+                        enum_windows_dm(0, title, class_name, filter_, pids=pids))
+
+    def EnumWindowByProcessId(self, pid: int, title: str, class_name: str,
+                              filter_: int) -> str:
+        """按进程 ID 枚举窗口, 语义同 EnumWindow。"""
+        from .win32.window import enum_windows_dm
+        return ",".join(str(h) for h in
+                        enum_windows_dm(0, title, class_name, filter_, pids={pid}))
 
     def GetWindowProcessId(self, hwnd) -> int:
         return GameWindow(hwnd).pid()

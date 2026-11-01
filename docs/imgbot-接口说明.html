@@ -597,15 +597,27 @@ dm.UnBindWindow()
 <a id='%E9%94%AE%E9%BC%A0/SendString.html'></a>
 <h3>SendString</h3>
 <p class='sec'>函数简介:</p>
-<p>向窗口打字(中文/代理对自动拆)。潜影=WM_CHAR 注入; 前台=UNICODE 注入。</p>
+<p>向窗口打字(中文/代理对自动拆)。默认 WM_CHAR; ime=True 切大漠真身配方 WM_IME_CHAR(GBK 字节大端打包) —— 老 ANSI 窗口(龙之谷类)打不进字时用。</p>
 <p class='sec'>函数原型:</p>
-<pre>SendString(hwnd, str)</pre>
+<pre>SendString(hwnd, str, ime=False)</pre>
 <p class='sec'>参数定义:</p>
-<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 窗口句柄<br>str_ <span class='maroon'></span> <b class='req'>【必传】</b>: </p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 窗口句柄<br>str_ <span class='maroon'></span> <b class='req'>【必传】</b>: <br>ime <span class='maroon'>bool</span> <b class='opt'>【可选, 默认 False】</b>: False=WM_CHAR; True=WM_IME_CHAR(老 ANSI 窗口)</p>
 <p class='sec'>返回值:</p>
 <p><span class='maroon'>整形数: 1</span></p>
 <p class='sec'>示例:</p>
 <pre>dm.SendString(edit_hwnd, "你好")</pre>
+<a id='%E9%94%AE%E9%BC%A0/LockInput.html'></a>
+<h3>LockInput</h3>
+<p class='sec'>函数简介:</p>
+<p>锁定/解锁物理键鼠输入(BlockInput, 锁定需管理员)。多开跑图防真人误碰。按对象记账幂等: 没锁过就解锁返回 1。</p>
+<p class='sec'>函数原型:</p>
+<pre>LockInput(lock)</pre>
+<p class='sec'>参数定义:</p>
+<p>lock <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 1 锁 0 解</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1/0</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.LockInput(1)</pre>
 <a id='%E9%94%AE%E9%BC%A0/SendPaste.html'></a>
 <h3>SendPaste</h3>
 <p class='sec'>函数简介:</p>
@@ -653,6 +665,54 @@ dm.UnBindWindow()
 <p><span class='maroon'>整形数: 句柄/0</span></p>
 <p class='sec'>示例:</p>
 <pre>edit = dm.FindWindowEx(hwnd, "Edit")</pre>
+<a id='%E7%AA%97%E5%8F%A3/EnumWindow.html'></a>
+<h3>EnumWindow</h3>
+<p class='sec'>函数简介:</p>
+<p>枚举窗口(大漠口径: 标题/类名模糊匹配, filter 位决定哪些条件生效, 可加法组合)。</p>
+<p class='sec'>函数原型:</p>
+<pre>EnumWindow(parent, title, class_name, filter_)</pre>
+<p class='sec'>参数定义:</p>
+<p>parent <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 父句柄, 0=顶层, 非 0=其子窗口<br>title <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 标题包含词(filter 含 1 才生效)<br>class_name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 类名包含词(filter 含 2 才生效)<br>filter_ <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 位掩码: 1 标题 2 类名 8 可见 16 最小化 32 最大化 64 弹出式</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串: "hwnd,hwnd,..."(无匹配空串)</span></p>
+<p class='sec'>示例:</p>
+<pre>hs = dm.EnumWindow(0, "华夏", "", 1+8)</pre>
+<a id='%E7%AA%97%E5%8F%A3/EnumWindowByProcess.html'></a>
+<h3>EnumWindowByProcess</h3>
+<p class='sec'>函数简介:</p>
+<p>按进程名枚举窗口(如多开游戏取全部实例), 语义同 EnumWindow。</p>
+<p class='sec'>函数原型:</p>
+<pre>EnumWindowByProcess(process_name, title, class_name, filter_)</pre>
+<p class='sec'>参数定义:</p>
+<p>process_name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: exe 名, 如 "game.exe"(可不带后缀)<br>title <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 标题包含词<br>class_name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 类名包含词<br>filter_ <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 同 EnumWindow</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串: "hwnd,hwnd,..."</span></p>
+<p class='sec'>示例:</p>
+<pre>hs = dm.EnumWindowByProcess("game.exe", "", "", 0)</pre>
+<a id='%E7%AA%97%E5%8F%A3/EnumWindowByProcessId.html'></a>
+<h3>EnumWindowByProcessId</h3>
+<p class='sec'>函数简介:</p>
+<p>按进程 ID 枚举窗口, 语义同 EnumWindow。</p>
+<p class='sec'>函数原型:</p>
+<pre>EnumWindowByProcessId(pid, title, class_name, filter_)</pre>
+<p class='sec'>参数定义:</p>
+<p>pid <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 进程 ID<br>title <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 标题包含词<br>class_name <span class='maroon'>字符串</span> <b class='req'>【必传】</b>: 类名包含词<br>filter_ <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 同 EnumWindow</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>字符串: "hwnd,hwnd,..."</span></p>
+<p class='sec'>示例:</p>
+<pre>hs = dm.EnumWindowByProcessId(pid, '', '', 0)</pre>
+<a id='%E7%AA%97%E5%8F%A3/SetWindowState.html'></a>
+<h3>SetWindowState</h3>
+<p class='sec'>函数简介:</p>
+<p>窗口状态操作(大漠 0-14 口径)。目标提权时本进程须同级(UIPI)。</p>
+<p class='sec'>函数原型:</p>
+<pre>SetWindowState(hwnd, flag)</pre>
+<p class='sec'>参数定义:</p>
+<p>hwnd <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 句柄<br>flag <span class='maroon'>整形数</span> <b class='req'>【必传】</b>: 0 关闭 / 1 激活 / 2 最小化 / 3 最小化+释放内存 / 4 最大化 / 5 恢复不激活 / 6 隐藏 / 7 显示 / 8 置顶 / 9 取消置顶 / 10 禁用 / 11 解禁 / 12 恢复并激活 / 13 强杀进程 / 14 闪烁</p>
+<p class='sec'>返回值:</p>
+<p><span class='maroon'>整形数: 1/0</span></p>
+<p class='sec'>示例:</p>
+<pre>dm.SetWindowState(hwnd, 8)   # 置顶</pre>
 <a id='%E7%AA%97%E5%8F%A3/GetWindowClass.html'></a>
 <h3>GetWindowClass</h3>
 <p class='sec'>函数简介:</p>
@@ -1215,7 +1275,6 @@ nav.go("dungeon")                           # 不管现在在哪, 图带路
 <table>
 <tr><th>方法</th><th>参数</th><th>留位原因</th></tr>
 <tr><td>EnableBind</td><td>enable</td><td>暂停/恢复后台绑定</td></tr>
-<tr><td>LockInput</td><td>lock</td><td>锁定物理键鼠输入</td></tr>
 <tr><td>LockDisplay</td><td>lock</td><td>锁定图色不刷新</td></tr>
 <tr><td>HackSpeed</td><td>rate</td><td>变速齿轮(IAT hook 时间函数)</td></tr>
 <tr><td>SetAero</td><td>enable</td><td>关闭 Aero 特效</td></tr>

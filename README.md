@@ -204,6 +204,10 @@ t.tap(*hit[:2])
 | `input.MouseKeyboard(window, inter_action_delay=0.05, rng=None)` | `click`/`double_click`/`move`/`hover`/`type_text`(WM_CHAR 逐码元) —— 拟人贝塞尔轨迹 |
 | `input.SendInputMouseKeyboard(window, inter_action_delay=0.05, rng=None)` | 前台键鼠(SendInput 真事件): 同 API 形状 + `key_tap`/`key_down`/`key_up`(扫描码裸键); `type_text` 用 KEYEVENTF UNICODE(IME 免疫); 动真光标, 单开专用 |
 | `input.send_paste(window, text)` | 剪贴板 + WM_PASTE(中文一次到位, 比逐字符稳) |
+| `input.send_ime_string(window, text)` | WM_IME_CHAR + GBK 字节大端打包(大漠 SendString 真身配方, 老 ANSI 窗口 WM_CHAR 打不进字时用) |
+| `window.set_window_state(hwnd, flag)` | 窗口状态操作(大漠 SetWindowState 0-14 口径: 0 关闭/1 激活/2 最小化/3 最小化+释放内存/4 最大化/5 恢复/6 隐藏/7 显示/8 置顶/9 取消置顶/10 禁用/11 解禁/12 恢复并激活/13 强杀进程/14 闪烁) |
+| `window.enum_windows_dm(parent=0, title="", class_name="", filter_=0, pids=None)` | 枚举窗口(大漠 EnumWindow 语义: 模糊匹配, filter 位 1 标题/2 类名/8 可见/16 最小化/32 最大化/64 弹出式, 可加法组合) |
+| `window.pids_of_process(name)` | 按进程名(exe, 可不带后缀)取 pid 集(EnumWindowByProcess 用) |
 | `input.human_path(x0, y0, x1, y1, rng, max_s=0.12)` | 拟人轨迹计算(纯函数, 可测) |
 
 异常类: `window.UipiError`(目标权限高于本进程, 需管理员同级)、`window.WindowLostError`(窗口被关/句柄过期)、
@@ -242,9 +246,12 @@ RGBA(alpha=掩码), `find`/`find_all` 对键控模板只比对非底色笔画 �
 | Capture / CapturePre | `Target.screenshot` / 消费项目 ops.frame(一帧多查) |
 | FindStr | `ocr.find_text` / `find_texts`(字库被 RapidOCR 替代) |
 | MoveTo/LeftClick(后台) | `win32.input.MouseKeyboard`(贝塞尔拟人轨迹) |
-| SendString / SendPaste | `type_text`(WM_CHAR / ADBKeyboard) / `send_paste` |
+| SendString / SendPaste | `type_text`(WM_CHAR / ADBKeyboard) / `send_paste`; 老 ANSI 窗口打不进字换 `send_ime_string`(WM_IME_CHAR, 大漠 SendString 真身配方) |
 | BindWindow(display,mouse,keypad) | `Win32Target(hwnd, capture=…, input=…)` / `AdbTarget(serial)` |
-| FindWindow / EnumWindow | `win32.window.GameWindow.find`(类名/标题) |
+| FindWindow / EnumWindow | `win32.window.GameWindow.find`(类名/标题) / `enum_windows_dm`+`pids_of_process`(大漠 filter 位口径) |
+| SetWindowState | `win32.window.set_window_state`(大漠 0-14 口径: 激活/隐藏/置顶/禁用/强杀…) |
+| LockInput | **DmSoft.LockInput**(BlockInput, 锁定需管理员) |
 
 明确不学: 驱动级键鼠(dx)、防护盾 DmGuard、HackSpeed/DownCpu、字库、Mem 内存图管理
-(见 AGENTS.md 红线); EnableFakeActive 的替代是 `park_offscreen` 细缝停靠。
+(见 AGENTS.md 红线)。EnableFakeActive 已随潜影 dx 通道实现(华夏实证: 激活门槛游戏的
+点击解药, 见 AGENTS.md)。

@@ -143,6 +143,11 @@
   鼠标 `mouse="dx"`+`EnableFakeActive(1)`✅(地面点击走路 24.4w 像素, DmSoft
   用户面 API 直测); 移动类操作点击前游戏必须在"自认激活"态, 否则全静默丢弃。
   验收脚本 scripts/huaxia_smoke.py(管理员终端 `uv run scripts/huaxia_smoke.py`)。
+- **大漠接口复刻补齐(2026-11-01)**: SetWindowState(0-14 官方口径, ShowWindow 族
+  返回值="之前状态"不是成败/EnableWindow 返回"之前是否禁用"两个坑已绕)、
+  EnumWindow 族(filter 位 1/2/8/16/32/64)、LockInput(BlockInput, 锁定需管理员,
+  返回值按对象记账幂等化)、SendString ime=True(WM_IME_CHAR+GBK 大端打包, 消息级
+  已验, 渲染级待 ANSI 靶校准)。未复刻保持显式 raise: 变速/驱动键鼠/内存族/字库。
 - **大漠键鼠反编译对照结论(2026-10-29, dm.dll 7.2642+组件 7.2319)**:
   GetCursorPos=虚拟光标客户区坐标(已对齐, 真人动鼠标不影响读数);
   KeyPress 修饰键 L/R→通用 VK 归一化+虚拟 Alt 追踪(后续键转 SYSKEY, 已对齐

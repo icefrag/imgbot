@@ -26,6 +26,7 @@ WM_KEYDOWN = 0x100
 WM_KEYUP = 0x101
 WM_CHAR = 0x102
 WM_PASTE = 0x302
+WM_IME_CHAR = 0x286
 
 MK_LBUTTON = 0x0001
 
@@ -187,6 +188,27 @@ class MouseKeyboard:
         for i in range(0, len(data), 2):
             self.window.post_message(WM_CHAR, int.from_bytes(data[i:i + 2], "little"), 1)
             time.sleep(per_char_delay)
+
+
+def send_ime_string(window, text, per_char_delay=0.03):
+    """大漠 SendString 真身配方: WM_IME_CHAR(0x286), wParam=GBK 字节大端打包
+    (双字节汉字一字节对打包进一个 wParam, ASCII 单字节直传)。
+
+    老 ANSI 窗口(龙之谷类)WM_CHAR UTF-16 打不进字时换这条路;
+    Unicode 窗口(记事本等)继续用 type_text(WM_CHAR)。
+    """
+    data = text.encode("gbk")
+    i = 0
+    while i < len(data):
+        b = data[i]
+        if b >= 0x80 and i + 1 < len(data):
+            wp = (b << 8) | data[i + 1]
+            i += 2
+        else:
+            wp = b
+            i += 1
+        window.post_message(WM_IME_CHAR, wp, 1)
+        time.sleep(per_char_delay)
 
 
 def send_paste(window, text):

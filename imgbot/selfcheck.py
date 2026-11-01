@@ -24,7 +24,7 @@ from .readout import enlarge, read_digits
 from .win32.capture import capture_client, capture_screen, virtual_screen_rect
 from .win32.input import (CF_UNICODETEXT, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
                           WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PASTE,
-                          MouseKeyboard, human_path, send_paste)
+                          MouseKeyboard, human_path, send_ime_string, send_paste)
 from .win32.window import GameWindow, list_windows, xor_frame
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -455,6 +455,13 @@ def main():
         scan = _user32.MapVirtualKeyW(0x0D, 0)  # 扫描码按真机布局查, 断言不写死
         assert keys[0][1] == 0x0D and keys[0][2] == 1 | (scan << 16), (hex(keys[0][2]),)
         assert keys[1][2] == 1 | (scan << 16) | (1 << 30) | (1 << 31), (hex(keys[1][2]),)
+        records.clear()
+        send_ime_string(gw, "魔A")            # 大漠 SendString 真身配方
+        pump()
+        imes = [w for m, w, _l in records if m == 0x286]
+        gbk = "魔A".encode("gbk")
+        assert imes == [(gbk[0] << 8) | gbk[1], gbk[2]], \
+            (imes, "WM_IME_CHAR 应 GBK 双字节大端打包/ASCII 单字节直传")
     finally:
         _user32.DestroyWindow(hwnd)
 
@@ -550,6 +557,41 @@ def main():
         assert gw.is_pseudo_minimized is False
     finally:
         cleanup2()
+
+    # ---- win32: 大漠窗口族(SetWindowState 0-14 口径 + EnumWindow 过滤位) ----
+    from .win32.window import enum_windows_dm, set_window_state
+    vh5, cleanup5 = create_visible_window(120, 60, (30, 200, 90))
+    try:
+        assert set_window_state(vh5, 6) and not _user32.IsWindowVisible(vh5)
+        assert set_window_state(vh5, 7) and _user32.IsWindowVisible(vh5)
+        assert set_window_state(vh5, 8)
+        assert _user32.GetWindowLongW(vh5, -20) & 0x8, "置顶后应带 WS_EX_TOPMOST"
+        assert set_window_state(vh5, 9)
+        assert not _user32.GetWindowLongW(vh5, -20) & 0x8
+        assert set_window_state(vh5, 10) and not _user32.IsWindowEnabled(vh5)
+        assert set_window_state(vh5, 11) and _user32.IsWindowEnabled(vh5)
+        assert set_window_state(vh5, 2) and _user32.IsIconic(vh5)
+        assert set_window_state(vh5, 12) and not _user32.IsIconic(vh5)
+        assert vh5 in enum_windows_dm(0, "imgbot-selfcheck", "", 1 | 8), \
+            "标题+可见过滤应枚举到自己"
+        assert vh5 not in enum_windows_dm(0, "绝不存在的标题xyz", "", 1 | 8)
+        from .win32.window import pids_of_process
+        assert pids_of_process("python") or pids_of_process("uv"), \
+            "本进程名应能取到 pid 集"
+        try:
+            set_window_state(vh5, 99)
+            assert False, "越界 flag 应抛 ValueError"
+        except ValueError:
+            pass
+    finally:
+        cleanup5()
+
+    # ---- win32: LockInput(BlockInput; lock=1 需管理员, 不断言锁定结果只走通解锁) ----
+    from .dmsoft import DmSoft
+    try:
+        DmSoft().LockInput(1)
+    finally:
+        assert DmSoft().LockInput(0) == 1
 
     # ---- nav: 界面导航图(定位两层/BFS/自愈/迷路/打断, 离线 FakeOps) ----
     class FakeOps:
