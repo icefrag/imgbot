@@ -170,14 +170,15 @@ def set_window_state(hwnd: int, flag: int) -> bool:
     5=恢复(不激活) 6=隐藏 7=显示(不抢焦点) 8=置顶 9=取消置顶
     10=禁用 11=解除禁用 12=恢复并激活 13=强杀所在进程 14=闪烁标题栏
 
-    激活/置顶/显隐族都是顶层窗口语义: 传子窗口句柄时自动取根(GetAncestor GA_ROOT)
-    再操作 —— SetForegroundWindow/SetWindowPos(TOPMOST) 对子窗句柄无效。
-    10/11 例外不取根(EnableWindow 对子控件本就合法)。
+    激活/置顶/最小化族是顶层窗口专属语义: 传子窗口句柄时自动取根(GetAncestor
+    GA_ROOT) —— 这些操作对子窗句柄是静默无效, 取根才是调用方显然的意图。
+    0/6/7/10/11 例外不取根(关闭/隐藏/显示/禁用族对子窗本就合法, 原样操作;
+    传错句柄是调用方的 bug, 库不猜)。
     """
     u = user32
     if not u.IsWindow(hwnd):
         return False
-    if flag not in (10, 11):
+    if flag in (1, 2, 3, 4, 5, 8, 9, 12, 14):
         root = u.GetAncestor(hwnd, 2)              # GA_ROOT: 子窗句柄 -> 最外层窗口
         if root:
             hwnd = root
