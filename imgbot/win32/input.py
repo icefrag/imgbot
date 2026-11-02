@@ -9,6 +9,9 @@
   "从消息循环读键"的窗口过程; 轮询型游戏(GetAsyncKeyState/DirectInput/RawInput)
   天然免疫(= 大漠键盘死案本尊), 那种目标换 dx 通道(进程内合成 + hook_keystate);
 - 前台键鼠 = SendInputMouseKeyboard(SendInput 真事件, DmSoft "normal" 通道)。
+- 三通道(本模块两类 + dx.input.DxMouseKeyboard)共用 BaseMouseKeyboard: 拟人
+  节奏(轨迹→停顿→按下→延时→抬起/双击第二击/拖拽插值/打字码元步进)与虚拟
+  光标记账单源在基类, 子类只实现投递原语 —— 反检测调参一处改三通道齐变。
 """
 import ctypes
 import math
@@ -22,6 +25,11 @@ WM_MOUSEMOVE = 0x200
 WM_LBUTTONDOWN = 0x201
 WM_LBUTTONUP = 0x202
 WM_LBUTTONDBLCLK = 0x203
+WM_RBUTTONDOWN = 0x204
+WM_RBUTTONUP = 0x205
+WM_MBUTTONDOWN = 0x207
+WM_MBUTTONUP = 0x208
+WM_MOUSEWHEEL = 0x20A
 WM_KEYDOWN = 0x100
 WM_KEYUP = 0x101
 WM_CHAR = 0x102
@@ -29,6 +37,8 @@ WM_PASTE = 0x302
 WM_IME_CHAR = 0x286
 
 MK_LBUTTON = 0x0001
+MK_RBUTTON = 0x0002
+MK_MBUTTON = 0x0010
 
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
@@ -97,31 +107,76 @@ def cursor_seed(hwnd: int) -> tuple[int, int]:
     return x, y
 
 
-class MouseKeyboard:
-    def __init__(self, window, inter_action_delay=0.05, rng=None):
-        self.window = window
+# ================= 键鼠通道基类(拟人节奏单源) =================
+# 三通道(PostMessage/SendInput/潜影dx)的节奏与虚拟光标记账共居此基类: 反检测
+# 调参(轨迹→停顿→按下→延时→抬起的节奏/双击第二击/拖拽插值/打字码元步进)
+# 一处改, 三通道齐变 —— 各通道只剩"怎么把一条事件投出去"的投递原语。
+_MSG_BUTTONS = {"left": (WM_LBUTTONDOWN, MK_LBUTTON, WM_LBUTTONUP),
+                "right": (WM_RBUTTONDOWN, MK_RBUTTON, WM_RBUTTONUP),
+                "middle": (WM_MBUTTONDOWN, MK_MBUTTON, WM_MBUTTONUP)}
+
+
+class BaseMouseKeyboard:
+    """键鼠通道共用层: 拟人节奏 + 虚拟光标(客户区)记账。
+
+    子类实现投递原语: _move_raw/_press/_second_press/_wheel/_key_down/
+    _key_up/_char, 外加 _alive(存活检查)与 _pre_motor(动作前置钩, 前台通道
+    抢前台用)。公开面三通道同形, DmSoft/Win32Target 直呼不嗅探。
+    """
+
+    def __init__(self, inter_action_delay=0.05, rng=None):
         self.delay = inter_action_delay
         self.rng = rng or random.Random()
-        self._pos = cursor_seed(window.hwnd)   # 首击起点=真实光标(钳内), 非 (0,0) 指纹
+        self._pos = (0, 0)             # 虚拟光标(客户区), 轨迹插值起点
 
-    def _ensure_alive(self):
-        if not self.window.is_alive():
-            raise WindowLostError("目标窗口已失效(被关闭?), 需重新绑定")
+    @property
+    def pos(self) -> tuple[int, int]:
+        """虚拟光标位置(客户区)—— DmSoft MoveR/LeftClick 族/GetCursorPos 读这里。"""
+        return self._pos
 
-    def _post_move(self, x, y):
-        self.window.post_message(WM_MOUSEMOVE, 0, _lp(x, y))
-        self._pos = (x, y)
+    # ---- 投递原语(子类实现) ----
+    def _move_raw(self, x, y):
+        """投递一次绝对定位(MouseMove 级); 子类完成后记 _pos。"""
+        raise NotImplementedError
+
+    def _press(self, btn, down, x, y):
+        """投递一次鼠标键事件(btn ∈ left/right/middle)。"""
+        raise NotImplementedError
+
+    def _second_press(self, x, y):
+        """双击第二击: 消息通道发 DBLCLK 语义, SendInput 发普通 down/up
+        (系统按双击间隔自己合成)。"""
+        raise NotImplementedError
+
+    def _wheel(self, delta):
+        raise NotImplementedError
+
+    def _alive(self):
+        raise NotImplementedError
+
+    def _pre_motor(self):
+        """电机动作(glide/drag)前置钩: 默认空操作。"""
+
+    # ---- 共用节奏 ----
+    def _glide(self, x, y):
+        """沿拟人贝塞尔轨迹移动到目标(click/hover 共用的接近方式)。"""
+        self._alive()
+        self._pre_motor()
+        for px, py, dt in human_path(self._pos[0], self._pos[1], x, y, self.rng):
+            self._move_raw(px, py)
+            if dt:
+                time.sleep(dt)
 
     def move(self, x, y, steps=0, interval=0.018):
         """移动光标。steps>0 时平滑插值(实测悬停可见变化的方式)。"""
-        self._ensure_alive()
+        self._alive()
         if steps <= 0:
-            self._post_move(x, y)
+            self._move_raw(x, y)
             return
         x0, y0 = self._pos
         for i in range(1, steps + 1):
             t = i / steps
-            self._post_move(round(x0 + (x - x0) * t), round(y0 + (y - y0) * t))
+            self._move_raw(round(x0 + (x - x0) * t), round(y0 + (y - y0) * t))
             time.sleep(interval)
 
     def hover(self, x, y, duration=1.5, jitter=1):
@@ -131,40 +186,154 @@ class MouseKeyboard:
         j = 0
         while time.time() < end:
             dx, dy = (jitter, 0) if j % 2 == 0 else (0, jitter)
-            self.window.post_message(WM_MOUSEMOVE, 0, _lp(x + dx, y + dy))
+            self._move_raw(x + dx, y + dy)
             j += 1
             time.sleep(0.2)
-        self._post_move(x, y)
+        self._move_raw(x, y)
 
-    def _glide(self, x, y):
-        """沿拟人轨迹发 WM_MOUSEMOVE 直到目标(点击/悬停共用的接近方式)。"""
-        self._ensure_alive()
-        for px, py, dt in human_path(self._pos[0], self._pos[1], x, y, self.rng):
-            self._post_move(px, py)
-            if dt:
-                time.sleep(dt)
-
-    def click(self, x, y, settle=None):
-        """后台点击: 拟人轨迹接近后按下/抬起(实测生效的顺序与延时)。
-        settle: 到位停顿秒数覆盖(None=默认 inter_action_delay)。"""
-        self._ensure_alive()
+    def _click_btn(self, btn, x, y, settle=None):
         self._glide(x, y)
         time.sleep(self.delay if settle is None else settle)
-        self.window.post_message(WM_LBUTTONDOWN, MK_LBUTTON, _lp(x, y))
+        self._press(btn, True, x, y)
         time.sleep(self.delay)
-        self.window.post_message(WM_LBUTTONUP, 0, _lp(x, y))
+        self._press(btn, False, x, y)
         self._pos = (x, y)
 
+    def click(self, x, y, settle=None):
+        """拟人点击: 轨迹接近 → 停顿 → 按下/抬起(反检测节奏单源在基类)。
+        settle: 到位停顿秒数覆盖(None=默认 inter_action_delay)。"""
+        self._click_btn("left", x, y, settle)
+
+    def right_click(self, x, y):
+        """右键拟人点击(与 click 同节奏)。"""
+        self._click_btn("right", x, y)
+
+    def middle_click(self, x=None, y=None):
+        """中键在指定点(默认当前光标位)按下/抬起(大漠 MiddleClick)。"""
+        if (x is None) != (y is None):
+            raise ValueError("x/y 须成对给出, 或都缺省用当前光标位")
+        px, py = (x, y) if x is not None else self._pos
+        self._click_btn("middle", px, py)
+
     def double_click(self, x, y, gap=0.09, settle=None):
-        """后台双击: 单击后紧跟 WM_LBUTTONDBLCLK(第二击用双击语义)。"""
+        """双击: 单击后紧跟第二击(gap 须落在系统双击间隔内, 默认 500ms)。"""
         self.click(x, y, settle=settle)
-        time.sleep(gap)                      # 须落在系统双击间隔内(默认 500ms)
+        time.sleep(gap)
+        self._second_press(x, y)
+
+    def drag(self, x1, y1, x2, y2, steps=12, interval=0.03):
+        """按住左键拖拽(上滑/下拉手势); 直线插值, 手势轨迹不需要拟人弯度。"""
+        self._alive()
+        self._pre_motor()
+        self._move_raw(x1, y1)
+        time.sleep(self.delay)
+        self._press("left", True, x1, y1)
+        time.sleep(self.delay)
+        for i in range(1, steps + 1):
+            t = i / steps
+            self._move_raw(round(x1 + (x2 - x1) * t), round(y1 + (y2 - y1) * t))
+            time.sleep(interval)
+        time.sleep(self.delay)
+        self._press("left", False, x2, y2)
+        self._pos = (x2, y2)
+
+    def wheel(self, up=True):
+        """滚轮一格(±120)。"""
+        self._wheel(120 if up else -120)
+
+    # -- 裸按钮事件(DmSoft 的 Down/Up 族) --
+    def left_down(self):
+        x, y = self._pos
+        self._press("left", True, x, y)
+
+    def left_up(self):
+        x, y = self._pos
+        self._press("left", False, x, y)
+
+    def right_down(self):
+        x, y = self._pos
+        self._press("right", True, x, y)
+
+    def right_up(self):
+        x, y = self._pos
+        self._press("right", False, x, y)
+
+    def middle_down(self):
+        x, y = self._pos
+        self._press("middle", True, x, y)
+
+    def middle_up(self):
+        x, y = self._pos
+        self._press("middle", False, x, y)
+
+    # ---- 键盘 ----
+    def key_down(self, vk):
+        """按下不抬。L/R 修饰键先归一成通用 VK(三通道一致)。"""
+        self._key_down(_GENERIC_VK.get(vk, vk))
+
+    def key_up(self, vk):
+        """抬起(L/R 归一同 key_down)。"""
+        self._key_up(_GENERIC_VK.get(vk, vk))
+
+    def key_tap(self, vk):
+        """按键: down → 拟人间隔 → up。"""
+        self._alive()
+        self.key_down(vk)
+        time.sleep(self.delay)
+        self.key_up(vk)
+
+    def type_text(self, text, per_char_delay=0.03):
+        """逐 UTF-16 码元打字(代理对自动拆分; 码元投递原语 _char 各通道不同)。"""
+        self._alive()
+        data = text.encode("utf-16-le")
+        for i in range(0, len(data), 2):
+            self._char(int.from_bytes(data[i:i + 2], "little"))
+            time.sleep(per_char_delay)
+
+    def _key_down(self, vk):
+        raise NotImplementedError
+
+    def _key_up(self, vk):
+        raise NotImplementedError
+
+    def _char(self, unit):
+        raise NotImplementedError
+
+
+class MouseKeyboard(BaseMouseKeyboard):
+    """后台键鼠(PostMessage 通道)。原理边界: 消息只达"从消息循环读键"的窗口
+    过程; 轮询型游戏(GetAsyncKeyState/DirectInput/RawInput)天然免疫(= 大漠键盘
+    死案本尊), 那种目标换 dx 通道(进程内合成 + hook_keystate)。"""
+
+    def __init__(self, window, inter_action_delay=0.05, rng=None):
+        self.window = window
+        super().__init__(inter_action_delay, rng)
+        self._pos = cursor_seed(window.hwnd)   # 首击起点=真实光标(钳内), 非 (0,0) 指纹
+
+    def _alive(self):
+        if not self.window.is_alive():
+            raise WindowLostError("目标窗口已失效(被关闭?), 需重新绑定")
+
+    def _move_raw(self, x, y):
+        self.window.post_message(WM_MOUSEMOVE, 0, _lp(x, y))
+        self._pos = (x, y)
+
+    def _press(self, btn, down, x, y):
+        msg_down, wp_down, msg_up = _MSG_BUTTONS[btn]
+        if down:
+            self.window.post_message(msg_down, wp_down, _lp(x, y))
+        else:
+            self.window.post_message(msg_up, 0, _lp(x, y))
+
+    def _second_press(self, x, y):
         self.window.post_message(WM_LBUTTONDBLCLK, MK_LBUTTON, _lp(x, y))
         time.sleep(self.delay)
         self.window.post_message(WM_LBUTTONUP, 0, _lp(x, y))
-        self._pos = (x, y)
 
-    # -- 键盘(消息按键): 大漠 windows 通道语义; 原理边界见模块头 --
+    def _wheel(self, delta):
+        x, y = self._pos
+        self.window.post_message(WM_MOUSEWHEEL, (delta & 0xFFFF) << 16, _lp(x, y))
+
     def _key_lparam(self, vk, up):
         """WM_KEYDOWN/KEYUP 的 lParam: repeat=1 | 扫描码<<16; KEYUP 加前态(bit30)+
         转换(bit31); 扩展键置 bit24 —— 与 SendInput 侧 _EXTENDED_VKS 同表, 通道一致。"""
@@ -178,32 +347,14 @@ class MouseKeyboard:
             lp |= (1 << 30) | (1 << 31)
         return lp
 
-    def key_down(self, vk):
-        """按下不抬。L/R 修饰键先归一成通用 VK(与 SendInput 通道一致)。"""
-        self._ensure_alive()
-        vk = _GENERIC_VK.get(vk, vk)
+    def _key_down(self, vk):
         self.window.post_message(WM_KEYDOWN, vk, self._key_lparam(vk, up=False))
 
-    def key_up(self, vk):
-        """抬起(L/R 归一同 key_down)。"""
-        self._ensure_alive()
-        vk = _GENERIC_VK.get(vk, vk)
+    def _key_up(self, vk):
         self.window.post_message(WM_KEYUP, vk, self._key_lparam(vk, up=True))
 
-    def key_tap(self, vk):
-        """后台按键: down → 拟人间隔 → up。只达从消息循环读键的目标; 游戏若走
-        GetAsyncKeyState/DirectInput 轮询硬件态, 消息到不了 → 换 dx 通道。"""
-        self.key_down(vk)
-        time.sleep(self.delay)
-        self.key_up(vk)
-
-    def type_text(self, text, per_char_delay=0.03):
-        """逐码元发送 WM_CHAR(UTF-16 码元, 代理对自动拆分)。"""
-        self._ensure_alive()
-        data = text.encode("utf-16-le")
-        for i in range(0, len(data), 2):
-            self.window.post_message(WM_CHAR, int.from_bytes(data[i:i + 2], "little"), 1)
-            time.sleep(per_char_delay)
+    def _char(self, unit):
+        self.window.post_message(WM_CHAR, unit, 1)
 
 
 def send_ime_string(window, text, per_char_delay=0.03):
@@ -266,7 +417,6 @@ _MF_MIDDLEDOWN, _MF_MIDDLEUP = 0x0020, 0x0040
 _MF_WHEEL = 0x0800
 _KEF_KEYUP, _KEF_SCANCODE, _KEF_EXTENDEDKEY = 0x0002, 0x0008, 0x0001
 _KEF_UNICODE = 0x0004                          # VK_PACKET 直接注字符(IME 免疫)
-_WHEEL_DELTA = 120
 _EXTENDED_VKS = frozenset((
     0x2D, 0x2E, 0x24, 0x23, 0x21, 0x22,          # Ins Del Home End PgUp PgDn
     0x25, 0x26, 0x27, 0x28, 0x90,                # 方向键 NumLock
@@ -274,6 +424,9 @@ _EXTENDED_VKS = frozenset((
 ))
 _GENERIC_VK = {0xA0: 0x10, 0xA1: 0x10, 0xA2: 0x11, 0xA3: 0x11,   # L/R→通用修饰
                0xA4: 0x12, 0xA5: 0x12}
+_BTN_FLAGS = {"left": (_MF_LEFTDOWN, _MF_LEFTUP),
+              "right": (_MF_RIGHTDOWN, _MF_RIGHTUP),
+              "middle": (_MF_MIDDLEDOWN, _MF_MIDDLEUP)}
 
 
 class _MOUSEINPUT(ctypes.Structure):
@@ -300,22 +453,27 @@ def _send_input(inp: _INPUT):
         raise OSError("SendInput 失败(UIPI? 目标以管理员运行则本进程需同级)")
 
 
-class SendInputMouseKeyboard:
-    """前台键鼠: SendInput 真实事件 + 拟人贝塞尔轨迹(复用 human_path)。
+class SendInputMouseKeyboard(BaseMouseKeyboard):
+    """前台键鼠: SendInput 真实事件 + 拟人贝塞尔轨迹(复用基类节奏)。
 
     坐标一律绑定窗口客户区坐标(与其他通道一致); 内部 ClientToScreen 换算后
-    发绝对移动(虚拟桌面归一化, 多显示器正确)。
+    发绝对移动(虚拟桌面归一化, 多显示器正确)。动作前自动把目标抢到真前台。
     """
 
     def __init__(self, window, inter_action_delay=0.05, rng=None):
         self.window = window
-        self.delay = inter_action_delay
-        self.rng = rng or random.Random()
-        self._pos = (0, 0)      # 虚拟光标(客户区), 轨迹插值起点
+        super().__init__(inter_action_delay, rng)
 
     def _alive(self):
         if not self.window.is_alive():
             raise WindowLostError("目标窗口已失效(被关闭?), 需重新绑定")
+
+    def _pre_motor(self):
+        self._ensure_fg()
+
+    def move(self, x, y, steps=0, interval=0.018):
+        """steps/interval 忽略: 前台移动恒拟人滑到(真光标瞬移是可见异常)。"""
+        self._glide(x, y)
 
     def _ensure_fg(self):
         """目标必须真前台(SendInput 打的是全局输入流)。
@@ -347,7 +505,7 @@ class SendInputMouseKeyboard:
         rx, ry, _, _ = self.window.client_rect()
         return rx + x, ry + y
 
-    def _move_abs(self, x, y):
+    def _move_raw(self, x, y):
         """客户区坐标 → 虚拟桌面归一化绝对移动(0..65535)。"""
         sx, sy = self._to_screen(x, y)
         vx, vy = _u32.GetSystemMetrics(76), _u32.GetSystemMetrics(77)
@@ -360,55 +518,18 @@ class SendInputMouseKeyboard:
         _send_input(inp)
         self._pos = (x, y)
 
-    def _glide(self, x, y):
-        self._alive()
-        self._ensure_fg()
-        for px, py, dt in human_path(self._pos[0], self._pos[1], x, y, self.rng):
-            self._move_abs(px, py)
-            if dt:
-                time.sleep(dt)
+    def _press(self, btn, down, x, y):
+        f_down, f_up = _BTN_FLAGS[btn]
+        inp = _INPUT(type=_INPUT_MOUSE)
+        inp.union.mi = _MOUSEINPUT(0, 0, 0, f_down if down else f_up, 0, 0)
+        _send_input(inp)
 
-    def move(self, x, y, steps=0, interval=0.018):
-        self._glide(x, y)
-
-    def click(self, x, y, settle=None):
-        self._glide(x, y)
-        time.sleep(self.delay if settle is None else settle)
-        self._button(_MF_LEFTDOWN, _MF_LEFTUP)
-
-    def right_click(self, x, y):
-        self._glide(x, y)
-        time.sleep(self.delay)
-        self._button(_MF_RIGHTDOWN, _MF_RIGHTUP)
-
-    def double_click(self, x, y, gap=0.09, settle=None):
-        self.click(x, y, settle=settle)
-        time.sleep(gap)
+    def _second_press(self, x, y):
         self._button(_MF_LEFTDOWN, _MF_LEFTUP)      # 系统按双击间隔自己合成 DBLCLK
 
-    def middle_click(self, x=None, y=None):
-        px, py = (x, y) if x is not None else self._pos
-        self._glide(px, py)
-        time.sleep(self.delay)
-        self._button(_MF_MIDDLEDOWN, _MF_MIDDLEUP)
-
-    def drag(self, x1, y1, x2, y2, steps=12, interval=0.03):
-        self._alive()
-        self._ensure_fg()
-        self._move_abs(x1, y1)
-        time.sleep(self.delay)
-        self._button(_MF_LEFTDOWN, 0)
-        for i in range(1, steps + 1):
-            t = i / steps
-            self._move_abs(round(x1 + (x2 - x1) * t), round(y1 + (y2 - y1) * t))
-            time.sleep(interval)
-        time.sleep(self.delay)
-        self._button(0, _MF_LEFTUP)
-
-    def wheel(self, up=True):
+    def _wheel(self, delta):
         inp = _INPUT(type=_INPUT_MOUSE)
-        inp.union.mi = _MOUSEINPUT(
-            0, 0, _WHEEL_DELTA if up else -_WHEEL_DELTA, _MF_WHEEL, 0, 0)
+        inp.union.mi = _MOUSEINPUT(0, 0, delta, _MF_WHEEL, 0, 0)
         _send_input(inp)
 
     # -- 按钮/按键的裸事件(DmSoft 的 Down/Up 族走这里) --
@@ -423,26 +544,7 @@ class SendInputMouseKeyboard:
             inp.union.mi = _MOUSEINPUT(0, 0, 0, up_flag, 0, 0)
             _send_input(inp)
 
-    def left_down(self):
-        self._button(_MF_LEFTDOWN, 0)
-
-    def left_up(self):
-        self._button(0, _MF_LEFTUP)
-
-    def right_down(self):
-        self._button(_MF_RIGHTDOWN, 0)
-
-    def right_up(self):
-        self._button(0, _MF_RIGHTUP)
-
-    def middle_down(self):
-        self._button(_MF_MIDDLEDOWN, 0)
-
-    def middle_up(self):
-        self._button(0, _MF_MIDDLEUP)
-
     def _key(self, vk, flags):
-        vk = _GENERIC_VK.get(vk, vk)                 # L/R 修饰键→通用码(通道间一致)
         scan = _u32.MapVirtualKeyW(vk, 0)
         if not scan:
             raise ValueError(f"VK 0x{vk:X} 无扫描码(键盘布局不认识)")
@@ -452,29 +554,22 @@ class SendInputMouseKeyboard:
         inp.union.ki = _KEYBDINPUT(0, scan, flags | _KEF_SCANCODE, 0, 0)
         _send_input(inp)
 
-    def key_down(self, vk):
+    def _key_down(self, vk):
         self._ensure_fg()
         self._key(vk, 0)
 
-    def key_up(self, vk):
+    def _key_up(self, vk):
         self._key(vk, _KEF_KEYUP)
 
-    def key_tap(self, vk):
-        self.key_down(vk)
-        time.sleep(self.delay)
-        self.key_up(vk)
+    def _char(self, unit):
+        for flags in (0, _KEF_KEYUP):
+            inp = _INPUT(type=_INPUT_KEYBOARD)
+            inp.union.ki = _KEYBDINPUT(0xE7, unit, _KEF_UNICODE | flags, 0, 0)
+            _send_input(inp)
 
     def type_text(self, text, per_char_delay=0.03):
         """打字: SendInput KEYEVENTF_UNICODE(VK_PACKET)逐 UTF-16 码元注入 ——
         直接生成 WM_CHAR, 绕过键盘布局与输入法(中文系统 IME 活动时, 扫描码/
         VK 注入的字母键会被 IME 吞成组合态, 实测 vk 被改写成 0xE5, 打不出字)。"""
         self._ensure_fg()
-        data = text.encode("utf-16-le")          # 代理对自动拆成两个码元
-        for i in range(0, len(data), 2):
-            unit = int.from_bytes(data[i:i + 2], "little")
-            inp = _INPUT(type=_INPUT_KEYBOARD)
-            inp.union.ki = _KEYBDINPUT(0xE7, unit, _KEF_UNICODE, 0, 0)
-            _send_input(inp)
-            inp.union.ki = _KEYBDINPUT(0xE7, unit, _KEF_UNICODE | _KEF_KEYUP, 0, 0)
-            _send_input(inp)
-            time.sleep(per_char_delay)
+        super().type_text(text, per_char_delay)

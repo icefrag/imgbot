@@ -30,6 +30,11 @@ _Avoid_: 自造通道名
 
 ### 图色
 
+**帧源(FrameSource)**:
+Ops 门面取帧的窄接口(取一帧 + 拟人点击 + 客户区尺寸), DmSoft 结构化满足,
+测试用假 adapter —— Ops 的一切策略(等待/冻结窗/停止优先)都测自这个 seam。
+_Avoid_: 让 Ops 直呼绑定对象的其他方法(通道/绑定细节该留在 seam 之后)
+
 **通道序(BGR)**:
 全库图像数据一律 BGR(ndarray), 截图到图色函数不中途转 RGB。
 _Avoid_: RGB 惯例

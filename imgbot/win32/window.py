@@ -133,6 +133,11 @@ def is_elevated():
     return bool(ctypes.WinDLL("shell32").IsUserAnAdmin())
 
 
+def foreground_window() -> int:
+    """当前前台窗口句柄(无则 0)—— 大漠 GetForegroundWindow 对应物。"""
+    return user32.GetForegroundWindow() or 0
+
+
 def unlock_process_dacl(pid: int) -> bool:
     """以 OWNER 身份把目标进程 DACL 改写成 Everyone 全权([盾]类登录器/自带护甲
     挂的进程锁, 拒 VM_READ/VM_OPERATION/CREATE_THREAD → 注入打不开进程)。
@@ -448,13 +453,26 @@ class GameWindow:
 
     def info(self):
         """(类名, 标题, 客户区(x,y,w,h)) — 绑定日志与身份校验用。"""
-        cname = ctypes.create_unicode_buffer(256)
-        user32.GetClassNameW(self.hwnd, cname, 256)
+        return self.window_class().strip(), self.window_title().strip(), self.client_rect()
+
+    def window_class(self) -> str:
+        """窗口类名(GetClassNameW)。"""
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(self.hwnd, buf, 256)
+        return buf.value
+
+    def window_title(self) -> str:
+        """窗口标题全文(GetWindowTextW)。"""
         n = user32.GetWindowTextLengthW(self.hwnd)
-        title = ctypes.create_unicode_buffer(n + 1)
+        buf = ctypes.create_unicode_buffer(n + 1)
         if n:
-            user32.GetWindowTextW(self.hwnd, title, n + 1)
-        return cname.value.strip(), title.value.strip(), self.client_rect()
+            user32.GetWindowTextW(self.hwnd, buf, n + 1)
+        return buf.value
+
+    def move(self, x: int, y: int):
+        """移动窗口左上角到屏幕坐标 (x, y), 不改大小不改变 Z 序
+        (SetWindowPos SWP_NOSIZE|SWP_NOZORDER; 大漠 MoveWindow 同款)。"""
+        user32.SetWindowPos(self.hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER)
 
     def window_rect(self):
         """(左, 上, 右, 下) 屏幕坐标 — 含边框/标题栏的完整窗口矩形(拾取高亮用)."""

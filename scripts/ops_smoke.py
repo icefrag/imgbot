@@ -35,7 +35,7 @@ def main():
     # 素材闭环: 打字 → 截屏裁出文字区存模板(只裁前 3 字, 避开行尾闪烁的插入符)
     dm.SendString(edit, "OPS888")
     time.sleep(0.4)
-    frame = dm._screen()
+    frame = dm.screen()
     LOG.mkdir(exist_ok=True)
     Path(LOG / "tpl").mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(LOG / "tpl" / "opsword.png"), frame[10:35, 10:40])

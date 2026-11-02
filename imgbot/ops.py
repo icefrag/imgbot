@@ -8,8 +8,8 @@
 - 停止信号先于命中检查(历史 bug: 已叫停但模板恰在屏上, 照样点了出去);
 - wait_pic/wait_pic_any/wait_text 超时自动 shot() 留痕(logs/shots/)。
 
-通道无关: 底下 BindWindow 选什么模式(normal/gdi/windows/dx)门面不关心,
-帧一律客户区坐标 BGR。裸输入(D 族)不进门面, 直接用 dm.MoveTo/dm.LeftClick。
+通道无关: 帧源 seam(FrameSource)之下 BindWindow 选什么模式(normal/gdi/windows/dx)
+门面不关心, 帧一律客户区坐标 BGR。裸输入(D 族)不进门面, 直接用 dm.MoveTo/dm.LeftClick。
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ import hashlib
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import cv2
 import numpy as np
@@ -27,10 +28,28 @@ from .dmsoft import _bgr
 SHOT_DIR = Path("logs/shots")
 
 
-class Ops:
-    """一个 DmSoft 绑定一个门面: ops = Ops(dm)。"""
+if TYPE_CHECKING:
+    from .win32.input import BaseMouseKeyboard
 
-    def __init__(self, dm):
+
+@runtime_checkable
+class FrameSource(Protocol):
+    """Ops 的帧源 seam: 门面只依赖这四件事, 其余(通道/绑定/注入)全在 seam 之后。
+
+    DmSoft 结构化满足(BindWindow 选什么通道都不影响本协议);
+    离线测试用假 adapter(见 selfcheck 的 _FakeDm)。"""
+
+    def screen(self) -> np.ndarray: ...
+    @property
+    def keymouse(self) -> "BaseMouseKeyboard": ...   # 拟人 click/drag(三通道基类; 测试 Fake 同形)
+    def GetBindWindow(self) -> int: ...
+    def GetClientSize(self, hwnd: int) -> tuple[int, int]: ...
+
+
+class Ops:
+    """一个帧源一个门面: ops = Ops(dm)(dm 面见 FrameSource, 通常是 DmSoft)。"""
+
+    def __init__(self, dm: FrameSource):
         self.dm = dm
         self._frozen: list[np.ndarray] = []   # 帧窗口栈(同一帧多查用)
 
@@ -55,7 +74,7 @@ class Ops:
     def same_frame(self):
         """一帧多查窗口: 进窗截一帧并冻结, 窗内所有查询(exists/probe/check_*/
         find_all/read_*)共用它; 出窗后查询各自现截。点完要看新画面的查找写在窗外。"""
-        self._frozen.append(self.dm._screen())
+        self._frozen.append(self.dm.screen())
         try:
             yield self
         finally:
@@ -139,7 +158,7 @@ class Ops:
         hit = []
 
         def check():
-            hit[:] = vision.find_color(self.dm._screen(), [(b, g, r)],
+            hit[:] = vision.find_color(self.dm.screen(), [(b, g, r)],
                                        tol=tol, region=region)[:1]
             return bool(hit)
 
@@ -151,7 +170,7 @@ class Ops:
                         interval: float = 0.4, stop=None) -> bool:
         (b, g, r), tol = _bgr(color)
         return self.wait_until(
-            lambda: not vision.find_color(self.dm._screen(), [(b, g, r)],
+            lambda: not vision.find_color(self.dm.screen(), [(b, g, r)],
                                           tol=tol, region=region),
             timeout, interval, stop)
 
@@ -162,7 +181,7 @@ class Ops:
 
         def check():
             nonlocal hit
-            hit = ocr.find_text(self.dm._screen(), text, region, min_ratio)
+            hit = ocr.find_text(self.dm.screen(), text, region, min_ratio)
             return hit is not None
 
         if self.wait_until(check, timeout, interval, stop):
@@ -180,7 +199,7 @@ class Ops:
         while time.monotonic() < end:
             if _stopped(stop):
                 return False
-            h = self._frame_hash(self.dm._screen(), region)
+            h = self._frame_hash(self.dm.screen(), region)
             run = run + 1 if h == last else 0
             if run >= frames - 1:
                 return True
@@ -191,9 +210,9 @@ class Ops:
     def wait_change(self, region, timeout: float = 30, interval: float = 0.3,
                     stop=None) -> bool:
         """等区域发生变化(过场结束/结算弹出), 基线是调用时的第一帧。"""
-        base = self._frame_hash(self.dm._screen(), region)
+        base = self._frame_hash(self.dm.screen(), region)
         return self.wait_until(
-            lambda: self._frame_hash(self.dm._screen(), region) != base,
+            lambda: self._frame_hash(self.dm.screen(), region) != base,
             timeout, interval, stop)
 
     # ================= B. 找点族 =================
@@ -202,7 +221,7 @@ class Ops:
                  verify=None, stop=None) -> bool:
         """找到就拟人点。timeout=0 单帧试; verify=点后要等到出现的图(二次确认,
         需要新帧, 冻结窗里不许用 verify)。点到返回 True, 未找到/验证失败 False。"""
-        if verify and self._frozen:
+        if verify is not None and self._frozen:
             raise RuntimeError("verify 要点后新帧, 不能在 same_frame 窗口里用")
         if timeout:
             hit = self.wait_pic(pic, region, timeout, interval, threshold, stop)
@@ -211,7 +230,7 @@ class Ops:
         if not hit:
             return False
         self.dm.keymouse.click(hit[0], hit[1])   # 一步式: 贝塞尔轨迹+停顿内置
-        if not verify:
+        if verify is None:
             return True
         # 停止信号贯穿到验证阶段; 返回转 bool(等待族语义: 验证失败=False)
         return self.wait_pic(verify, region, timeout=5, stop=stop) is not None
@@ -243,10 +262,10 @@ class Ops:
             if hit:
                 return hit[0], hit[1]
             # 拖到底判定: 拖前拖后整屏哈希不变 = 画面没动, 别再空转
-            before = self._frame_hash(self.dm._screen(), None)
+            before = self._frame_hash(self.dm.screen(), None)
             self._swipe_once(drag)
             time.sleep(0.3)
-            if self._frame_hash(self.dm._screen(), None) == before:
+            if self._frame_hash(self.dm.screen(), None) == before:
                 return None
         return None
 
@@ -330,7 +349,7 @@ class Ops:
     # ================= 内部 =================
     def _frame(self) -> np.ndarray:
         """冻结窗内返回冻结帧, 否则现截。"""
-        return self._frozen[-1] if self._frozen else self.dm._screen()
+        return self._frozen[-1] if self._frozen else self.dm.screen()
 
     @staticmethod
     def _tpl(pic):
@@ -351,7 +370,7 @@ class Ops:
         """等待族专用: 永远现截(等待的语义就是要新画面)。"""
         t = self._tpl(pic)
         return None if t is None else vision.find(
-            self.dm._screen(), t, threshold or vision.DEFAULT_THRESHOLD, region)
+            self.dm.screen(), t, threshold or vision.DEFAULT_THRESHOLD, region)
 
     def _find_any(self, pics, region, threshold):
         th = threshold or vision.DEFAULT_THRESHOLD
@@ -389,16 +408,8 @@ class Ops:
         return vec[direction]
 
     def _swipe_once(self, vec) -> bool:
-        """线性插值拖拽(手势轨迹不需要拟人弯度)。"""
-        x1, y1, x2, y2 = vec
-        self.dm.MoveTo(x1, y1)
-        self.dm.LeftDown()
-        for i in range(1, 13):
-            t = i / 12
-            self.dm.MoveTo(round(x1 + (x2 - x1) * t),
-                           round(y1 + (y2 - y1) * t))
-            time.sleep(0.03)
-        self.dm.LeftUp()
+        """线性插值拖拽(手势轨迹不需要拟人弯度)—— 走键鼠通道 drag, 不手搓消息序列。"""
+        self.dm.keymouse.drag(*vec, steps=12, interval=0.03)
         return True
 
 

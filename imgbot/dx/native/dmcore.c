@@ -21,39 +21,7 @@
  */
 #include <windows.h>
 #include "obfstrings.gen.h"   /* 构建期生成(build.py): 遮蔽串密文+obf_init 解码 */
-
-#define SHM_MAGIC   0x49425844u   /* "DXBI" */
-#define FRAME_OFF   4096
-#define FRAME_CAP   (32 * 1024 * 1024 - FRAME_OFF)
-
-#define CMD_PING     1
-#define CMD_BYE      2
-#define CMD_HOOK_GL  3
-#define CMD_BIND     4   /* arg0=hwnd: 键鼠命令的目标窗口 */
-#define CMD_KEY      5   /* arg0=vk, arg1=mode(0=down 1=up 2=char, wParam=码元) */
-#define CMD_MOUSE    6   /* arg0=(y<<16)|x 客户区, arg1=op(见 do_mouse) */
-#define CMD_RAWINFO  7   /* 诊断: 目标进程 raw input 注册情况, 结果写 arg0/arg1 */
-#define CMD_FAKE_ACTIVE 8  /* arg0=1/0: 子类化目标窗口, 吞失焦/失活消息(大漠 EnableFakeActive) */
-#define CMD_HIDE     9   /* 从 PEB 模块链摘除本 DLL(大漠 dx.public.hide.dll 简版) */
-#define CMD_HOOK_D3D9 10 /* d3d9 vtable 钩子(时机: 目标须在挂好后再调 Direct3DCreate9) */
-#define CMD_KEYSTATE 11  /* 钩 user32!GetKeyState/GetAsyncKeyState(x86 热补丁) */
-#define CMD_MOUSE_LOCK 12 /* 钩 user32!GetCursorPos 返回虚拟光标(大漠 dx.mouse.position.lock.api) */
-#define CMD_MOUSE_PACK 13 /* dx 鼠标全家桶: 大漠"常用 dx 鼠标属性"7 属性预设一键武装 */
-
-#define KEY_DOWN 0
-#define KEY_UP   1
-#define KEY_CHAR 2
-
-#define M_MOVE     0
-#define M_LDOWN    1
-#define M_LUP      2
-#define M_RDOWN    3
-#define M_RUP      4
-#define M_MDOWN    5
-#define M_MUP      6
-#define M_DBLCLK    7    /* WM_LBUTTONDBLCLK(第二击双击语义) */
-#define M_WHEEL_UP   9
-#define M_WHEEL_DOWN 10
+#include "proto.gen.h"        /* 构建期生成(build.py): 命令码/头布局, 单源 imgbot/dx/proto.py */
 
 #define SMTO_FLAGS (SMTO_ABORTIFHUNG | SMTO_BLOCK)
 
@@ -62,18 +30,6 @@
 #define GL_BGR          0x80E0
 #define GL_BGRA         0x80E1
 #define GL_UNSIGNED_BYTE 0x1401
-
-/* 帧格式: 1=BGRA8 行序自底向上(Python 侧翻), 2=RGB8 自底向上 */
-typedef struct {
-    DWORD magic, version, state, heartbeat;
-    DWORD cmd, cmd_seq, ack_seq, ack_result;
-    DWORD frame_seq, frame_w, frame_h, frame_fmt;
-    DWORD swap_calls, gl_err, vp_w, vp_h;      /* 诊断: 钩子被调数/最后GL错误/最后视口 */
-    DWORD arg0, arg1;                          /* 命令参数(v2) */
-    DWORD msg_filtered;                        /* 假激活吞掉的消息数(v3) */
-    DWORD crash_code, crash_addr, self_base;   /* VEH 首例(参考) */
-    DWORD ring[8];                             /* VEH 环形: 最近4例(code,addr) */
-} Header;
 
 static HMODULE g_self;
 static HANDLE  g_map;
@@ -1198,7 +1154,7 @@ static DWORD WINAPI worker(LPVOID unused)
     if (!g_map) return 1;
     g_hdr = (Header *)MapViewOfFile(g_map, FILE_MAP_ALL_ACCESS, 0, 0, 0);
     if (!g_hdr) { CloseHandle(g_map); g_map = NULL; return 2; }
-    if (g_hdr->magic != SHM_MAGIC || g_hdr->version != 8) {
+    if (g_hdr->magic != SHM_MAGIC || g_hdr->version != PROTO_VERSION) {
         UnmapViewOfFile(g_hdr); CloseHandle(g_map);
         g_hdr = NULL; g_map = NULL;
         if (g_mutex) { CloseHandle(g_mutex); g_mutex = NULL; }

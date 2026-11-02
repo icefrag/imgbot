@@ -422,6 +422,122 @@ def main():
     big[40:96, 240:240 + t2.shape[1], :] = t2
     assert read_digits(big, {"1": t1, "2": t2}) == "12"
 
+    # ---- Ops 门面(帧源 seam: 假 adapter 离线覆盖等待/冻结/停止/找点全策略) ----
+    from . import ops as ops_mod
+    from .dmsoft import DmSoft
+    from .ops import FrameSource, Ops
+
+    class _FakeDm:
+        """FrameSource 假 adapter: 逐帧吐(耗尽停末张), 点击/拖拽只记账。"""
+        def __init__(self, frames):
+            self.frames, self.i = list(frames), 0
+            self.screen_calls = 0
+            self.clicks, self.drags = [], []
+
+        def screen(self):
+            self.screen_calls += 1
+            img = self.frames[min(self.i, len(self.frames) - 1)]
+            self.i += 1
+            return img
+
+        @property
+        def keymouse(self):
+            return self                       # click/drag 即本对象
+
+        def click(self, x, y, settle=None):
+            self.clicks.append((x, y))
+
+        def drag(self, x1, y1, x2, y2, **_):
+            self.drags.append((x1, y1, x2, y2))
+
+        def GetBindWindow(self):
+            return 4321
+
+        def GetClientSize(self, hwnd):
+            return 960, 540
+
+    assert isinstance(DmSoft(), FrameSource), "DmSoft 应结构化满足帧源协议"
+    blank = np.zeros((540, 960, 3), np.uint8)
+    assert isinstance(_FakeDm([screen]), FrameSource)
+
+    hit = Ops(_FakeDm([screen])).wait_pic(tpl, timeout=2, interval=0.02)
+    assert hit and abs(hit[0] - 360) <= 1 and abs(hit[1] - 120) <= 1, hit
+    with tempfile.TemporaryDirectory() as td:   # 超时安静返回 + 留痕(shot 落临时目录)
+        _orig_shot_dir = ops_mod.SHOT_DIR
+        ops_mod.SHOT_DIR = Path(td)
+        try:
+            assert Ops(_FakeDm([blank])).wait_pic(tpl, timeout=0.15,
+                                                  interval=0.05) is None
+            assert len(list(Path(td).glob("*.png"))) == 1, "超时应自动留痕一张"
+        finally:
+            ops_mod.SHOT_DIR = _orig_shot_dir
+    ev4 = threading.Event()
+    ev4.set()
+    fo_stop = _FakeDm([screen])
+    assert Ops(fo_stop).wait_pic(tpl, timeout=5, interval=0.05, stop=ev4) is None
+    assert fo_stop.screen_calls == 1, \
+        "停止优先: 轮询一轮都不跑, 只剩超时留痕的那一帧截图"
+
+    # same_frame: 窗内 N 查共用一帧, 出窗各自现截; 等待/verify 进窗即拒
+    fo_fr = _FakeDm([screen, screen])
+    ops_fr = Ops(fo_fr)
+    with ops_fr.same_frame():
+        assert ops_fr.exists(tpl) and ops_fr.find_all(tpl)
+        assert fo_fr.screen_calls == 1, "窗内多查应只截一帧"
+        try:
+            ops_fr.wait_pic(tpl, timeout=0.1)
+            raise AssertionError("冻结窗里等待应拒绝")
+        except RuntimeError:
+            pass
+        try:
+            ops_fr.find_tap(tpl, verify=tpl)
+            raise AssertionError("冻结窗里 verify 应拒绝")
+        except RuntimeError:
+            pass
+    ops_fr.exists(tpl)
+    assert fo_fr.screen_calls == 2, "出窗后查询应各自现截"
+
+    # find_tap: 点击记账 + verify 二次确认; 停止贯穿验证阶段
+    pat_v = np.zeros((40, 120, 3), np.uint8)
+    pat_v[:, ::3] = 250
+    tpl_v = cv2.cvtColor(pat_v, cv2.COLOR_BGR2GRAY)
+    frame_v = blank.copy()
+    frame_v[200:240, 500:620] = pat_v
+    fo_tap = _FakeDm([screen, frame_v])
+    assert Ops(fo_tap).find_tap(tpl, timeout=1, interval=0.02, verify=tpl_v) is True
+    assert fo_tap.clicks == [(360, 120)], fo_tap.clicks
+    fo_tap2 = _FakeDm([screen, frame_v])
+    assert Ops(fo_tap2).find_tap(tpl, timeout=1, interval=0.02, verify=tpl_v,
+                                 stop=lambda: len(fo_tap2.clicks) >= 1) is False, \
+        "点击后叫停: verify 阶段应立即放弃"
+
+    # tap_until_gone: 点一下图消失即收手
+    fo_gone = _FakeDm([screen, screen, blank])
+    assert Ops(fo_gone).tap_until_gone(tpl, timeout=3, interval=0.02) == 1
+    assert fo_gone.clicks == [(360, 120)], fo_gone.clicks
+
+    # swipe_find: 首屏命中不拖; 拖后画面不变 = 到底
+    fo_sw = _FakeDm([screen])
+    assert Ops(fo_sw).swipe_find(tpl, "up", timeout=1) == (360, 120)
+    assert fo_sw.drags == [], "首屏命中不应拖"
+    fo_sw2 = _FakeDm([blank])
+    assert Ops(fo_sw2).swipe_find(tpl, "up", timeout=2) is None
+    assert len(fo_sw2.drags) == 1, fo_sw2.drags
+
+    # wait_color / wait_stable / wait_change
+    frame_c = blank.copy()
+    frame_c[300:310, 400:410] = (0, 200, 0)                    # BGR 绿(#00C800)
+    assert Ops(_FakeDm([blank, frame_c])).wait_color(
+        "00C800", timeout=1, interval=0.02) == (400, 300)
+    fa = np.full((540, 960, 3), 10, np.uint8)
+    fb = np.full((540, 960, 3), 20, np.uint8)
+    assert Ops(_FakeDm([fa, fb, fb, fb])).wait_stable(
+        None, timeout=2, interval=0.02, frames=3) is True
+    assert Ops(_FakeDm([fa, fb] * 20)).wait_stable(
+        None, timeout=0.2, interval=0.05, frames=3) is False
+    assert Ops(_FakeDm([fa, fa, fb])).wait_change(
+        None, timeout=1, interval=0.02) is True
+
     # ---- ime 资产在位 ----
     assert ime.ASSET_APK.exists(), "ADBKeyboard.apk 应随库打包在 imgbot/assets/"
 
@@ -462,6 +578,30 @@ def main():
         gbk = "魔A".encode("gbk")
         assert imes == [(gbk[0] << 8) | gbk[1], gbk[2]], \
             (imes, "WM_IME_CHAR 应 GBK 双字节大端打包/ASCII 单字节直传")
+        # 补齐后的 windows 通道全表面(与 dx/SendInput 同形): 右键/滚轮/裸按钮/拖拽
+        records.clear()
+        mk.right_click(30, 40)
+        pump()
+        kinds = [m for m, _w, _l in records]
+        assert 0x204 in kinds and 0x205 in kinds, kinds
+        assert [w for m, w, _l in records if m == 0x204] == [2], "右键按下 wParam=MK_RBUTTON"
+        records.clear()
+        mk.left_down()
+        mk.left_up()
+        mk.wheel(up=True)
+        pump()
+        kinds = [m for m, _w, _l in records]
+        assert kinds[:2] == [WM_LBUTTONDOWN, WM_LBUTTONUP], kinds
+        assert [w for m, w, _l in records if m == 0x20A] == [120 << 16], \
+            "WM_MOUSEWHEEL wParam 高16位=delta"
+        records.clear()
+        mk.drag(10, 10, 50, 50, steps=2, interval=0)
+        pump()
+        kinds = [m for m, _w, _l in records]
+        # 拖拽序列: 移到起点 → LDOWN → 2 步插值移动 → LUP; 光标记到终点
+        assert kinds[0] == WM_MOUSEMOVE and kinds[1] == WM_LBUTTONDOWN, kinds
+        assert kinds[-1] == WM_LBUTTONUP and kinds.count(WM_MOUSEMOVE) == 3, kinds
+        assert mk.pos == (50, 50), mk.pos
     finally:
         _user32.DestroyWindow(hwnd)
 
@@ -597,13 +737,19 @@ def main():
         from .win32.input import MouseKeyboard as _MK
         sx, sy, cw, ch = GameWindow(vh5).client_rect()
         _user32.SetCursorPos(sx + cw // 2, sy + ch // 2)
-        assert _MK(GameWindow(vh5))._pos == (cw // 2, ch // 2), "窗内: 种子=光标落点"
+        assert _MK(GameWindow(vh5)).pos == (cw // 2, ch // 2), "窗内: 种子=光标落点"
         _user32.SetCursorPos(sx - 50, sy - 50)          # 窗外左上 → 钳边
-        assert _MK(GameWindow(vh5))._pos == (0, 0), "窗外: 应钳到贴边"
+        assert _MK(GameWindow(vh5)).pos == (0, 0), "窗外: 应钳到贴边"
         # DmSoft 层包装(大漠壳转发必须与 win32 底层同效)
         assert dmw.SetWindowState(vh5, 6) == 1 and not _user32.IsWindowVisible(vh5)
         assert dmw.SetWindowState(vh5, 7) == 1
         assert str(vh5) in dmw.EnumWindow(0, "imgbot-selfcheck", "", 1 | 8)
+        # 窗口族单风格(全走 GameWindow, 不再有壳内联 ctypes)
+        assert dmw.GetWindowClass(vh5).lower().startswith("imgbotvis"), dmw.GetWindowClass(vh5)
+        assert dmw.GetWindowTitle(vh5) == "imgbot-selfcheck", dmw.GetWindowTitle(vh5)
+        dmw.MoveWindow(vh5, 100, 100)
+        assert GameWindow(vh5).window_rect()[:2] == (100, 100), "MoveWindow 应真移动"
+        assert isinstance(dmw.GetForegroundWindow(), int)
         from .win32.window import pids_of_process
         assert pids_of_process("python") or pids_of_process("uv"), \
             "本进程名应能取到 pid 集"

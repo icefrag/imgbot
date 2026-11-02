@@ -55,7 +55,6 @@ def main():
             seq1 = host.frame_info()[0]
             time.sleep(1.0)
             fps = host.frame_info()[0] - seq1
-            h_ = host.hdr
             print(f"取帧: {f1.shape[1]}x{f1.shape[0]} 帧差={d:.1f} "
                   f"({'>5 变色循环被捕获' if d > 5 else '画面没变?'})")
             print(f"帧率: ~{fps} fps(swap_calls={host.swap_calls}, err={host.last_err:#06x})")

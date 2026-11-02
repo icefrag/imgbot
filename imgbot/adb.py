@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+
+# 无控制台宿主(如打包成 windowed exe 的翠鸟)里起控制台子进程, Windows 会给子进程
+# 新开终端窗口一闪而过 —— 恒加 CREATE_NO_WINDOW(有控制台的宿主不受影响)。
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 class AdbError(RuntimeError):
@@ -26,7 +31,7 @@ class AdbDevice:
         err = "未知错误"
         for _ in range(2):
             try:
-                r = subprocess.run(cmd, capture_output=True, timeout=timeout)
+                r = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=_NO_WINDOW)
             except (subprocess.TimeoutExpired, OSError) as e:
                 err = repr(e)
                 continue
@@ -84,7 +89,7 @@ def png_size(png: bytes) -> tuple[int, int]:
 def adb(adb_path: str, *args: str, timeout: float = 15) -> str:
     """无 -s 的全局 adb 命令(connect / devices 等)."""
     try:
-        r = subprocess.run([adb_path, *args], capture_output=True, timeout=timeout)
+        r = subprocess.run([adb_path, *args], capture_output=True, timeout=timeout, creationflags=_NO_WINDOW)
     except (subprocess.TimeoutExpired, OSError) as e:
         raise AdbError(f"adb {' '.join(args)}: {e!r}") from e
     if r.returncode != 0:

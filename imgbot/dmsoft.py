@@ -237,7 +237,8 @@ class DmSoft:
         raise NotImplementedError("LockMouseRect(前台)未实现")
 
     # ================= 图色 =================
-    def _screen(self) -> np.ndarray:
+    def screen(self) -> np.ndarray:
+        """取一帧(客户区坐标 BGR)—— Ops 帧源 seam(FrameSource)的实现。"""
         if self._display == "normal":
             # 前台=截全屏后裁到绑定窗口客户区: 下游坐标系统一为客户区(大漠同款,
             # 不裁的话 FindPic 返回屏幕坐标、点击却按客户区坐标走, 必错位)
@@ -252,29 +253,29 @@ class DmSoft:
 
     def Capture(self, x1, y1, x2, y2, file, *_):
         """截取区域存 BMP; 存档格式按扩展名(PNG/JPG 同 CapturePng/CaptureJpg)。"""
-        img = self._screen()[y1:y2, x1:x2]
+        img = self.screen()[y1:y2, x1:x2]
         return 1 if cv2.imwrite(file, img) else 0
 
     def CapturePng(self, x1, y1, x2, y2, file):
-        return 1 if cv2.imwrite(file, self._screen()[y1:y2, x1:x2]) else 0
+        return 1 if cv2.imwrite(file, self.screen()[y1:y2, x1:x2]) else 0
 
     def CaptureJpg(self, x1, y1, x2, y2, file, quality=90):
-        return 1 if cv2.imwrite(file, self._screen()[y1:y2, x1:x2],
+        return 1 if cv2.imwrite(file, self.screen()[y1:y2, x1:x2],
                                 [cv2.IMWRITE_JPEG_QUALITY, quality]) else 0
 
     def GetColor(self, x, y, _bpp=0) -> str:
         """取色, 返回 "RRGGBB"(大漠格式)。"""
-        b, g, r = vision.color_at(self._screen(), x, y)
+        b, g, r = vision.color_at(self.screen(), x, y)
         return f"{r:02X}{g:02X}{b:02X}"
 
     def GetColorBGR(self, x, y) -> str:
-        b, g, r = vision.color_at(self._screen(), x, y)
+        b, g, r = vision.color_at(self.screen(), x, y)
         return f"{b:02X}{g:02X}{r:02X}"
 
     def CmpColor(self, x, y, color, sim=1.0) -> int:
         """比较坐标颜色。返回 1/0(大漠语义)。"""
         (b, g, r), tol = _bgr(color)
-        return 1 if vision.cmp_color(self._screen(), x, y, (b, g, r),
+        return 1 if vision.cmp_color(self.screen(), x, y, (b, g, r),
                                      tol=tol + round((1 - sim) * 32)) else 0
 
     def FindColor(self, x1, y1, x2, y2, color, sim=1.0, dir=0, *_):
@@ -294,7 +295,7 @@ class DmSoft:
 
     def _find_colors(self, x1, y1, x2, y2, color, sim):
         cols, tol = _bgr(color)
-        return vision.find_color(self._screen(), [cols], tol=tol + round((1 - sim) * 32),
+        return vision.find_color(self.screen(), [cols], tol=tol + round((1 - sim) * 32),
                                  region=(x1, y1, x2, y2))
 
     def FindPic(self, x1, y1, x2, y2, pic_name, delta_color="000000", sim=0.9,
@@ -303,7 +304,7 @@ class DmSoft:
         未找到 (-1, -1, -1) —— x,y 为模板左上角(大漠语义; vision.find 返回中心,
         此处换算回去, 移植老脚本点击才不错位)。"""
         names = pic_name.split("|")
-        screen = self._screen()
+        screen = self.screen()
         for idx, name in enumerate(names):
             tpl = vision.load(name)
             hit = vision.find(screen, tpl, threshold=sim,
@@ -327,19 +328,19 @@ class DmSoft:
             dx_, dy_, col = item.split("|")
             (b, g, r), t = _bgr(col)
             pts.append(Pt(int(dx_), int(dy_), (b, g, r), t + round((1 - sim) * 32)))
-        hit = vision.find_by_points(self._screen(), (x1, y1, x2, y2), pts)
+        hit = vision.find_by_points(self.screen(), (x1, y1, x2, y2), pts)
         return (hit[0], hit[1]) if hit else (-1, -1)
 
     def GetColorNum(self, x1, y1, x2, y2, color, sim=1.0) -> int:
         cols, tol = _bgr(color)
-        return vision.count_color(self._screen(), [cols],
+        return vision.count_color(self.screen(), [cols],
                                   tol=tol + round((1 - sim) * 32),
                                   region=(x1, y1, x2, y2))
 
     def IsDisplayDead(self, x1, y1, x2, y2, t=2) -> int:
         """区域 t 秒画面不变返回 1(卡屏检测; 区域裁剪后比对, 全屏死=区域死)。"""
         def shot():
-            return self._screen()[y1:y2, x1:x2]
+            return self.screen()[y1:y2, x1:x2]
         return 1 if vision.is_display_dead(shot, timeout=t) else 0
 
     # ================= 键鼠 =================
@@ -366,8 +367,10 @@ class DmSoft:
 
     @property
     def keymouse(self):
-        """绑定键鼠对象(跨通道同形门面): click(x, y[, settle]) = 一步拟人点击
-        (贝塞尔轨迹到位→停顿→按下); MoveTo+LeftClick 两步是瞬移, 无轨迹。"""
+        """绑定键鼠对象(三通道同形, 见 win32.input.BaseMouseKeyboard 公开面):
+        click(x, y[, settle]) = 一步拟人点击(贝塞尔轨迹到位→停顿→按下);
+        另有 right_click/middle_click/double_click/drag/wheel/key_tap/type_text
+        等。MoveTo+LeftClick 两步是瞬移, 无轨迹。"""
         return self._mk_()
 
     def MoveTo(self, x, y):
@@ -381,67 +384,50 @@ class DmSoft:
         return 1
 
     def MoveR(self, rx, ry):
-        x, y = self._mk_()._pos
+        x, y = self._mk_().pos
         return self.MoveTo(x + rx, y + ry)
 
     def LeftClick(self):
         mk = self._mk_()
-        mk.click(*mk._pos)
+        mk.click(*mk.pos)
         return 1
 
     def LeftDoubleClick(self):
         mk = self._mk_()
-        mk.double_click(*mk._pos)
+        mk.double_click(*mk.pos)
         return 1
 
     def LeftDown(self):
-        x, y = self._mk_()._pos
-        self._post(0x0201, 1, x, y)
+        self._mk_().left_down()
         return 1
 
     def LeftUp(self):
-        x, y = self._mk_()._pos
-        self._post(0x0202, 0, x, y)
+        self._mk_().left_up()
         return 1
 
     def RightClick(self):
         mk = self._mk_()
-        if hasattr(mk, "right_click"):
-            mk.right_click(*mk._pos)
-        else:
-            x, y = mk._pos
-            self._post(0x0204, 2, x, y)
-            self._post(0x0205, 0, x, y)
+        mk.right_click(*mk.pos)
         return 1
 
     def RightDown(self):
-        x, y = self._mk_()._pos
-        self._post(0x0204, 2, x, y)
+        self._mk_().right_down()
         return 1
 
     def RightUp(self):
-        x, y = self._mk_()._pos
-        self._post(0x0205, 0, x, y)
+        self._mk_().right_up()
         return 1
 
     def MiddleClick(self):
-        mk = self._mk_()
-        if hasattr(mk, "middle_click"):
-            mk.middle_click()
-        else:
-            x, y = mk._pos
-            self._post(0x0207, 0x10, x, y)
-            self._post(0x0208, 0, x, y)
+        self._mk_().middle_click()
         return 1
 
     def MiddleDown(self):
-        x, y = self._mk_()._pos
-        self._post(0x0207, 0x10, x, y)
+        self._mk_().middle_down()
         return 1
 
     def MiddleUp(self):
-        x, y = self._mk_()._pos
-        self._post(0x0208, 0, x, y)
+        self._mk_().middle_up()
         return 1
 
     def WheelDown(self):
@@ -453,26 +439,7 @@ class DmSoft:
         return 1
 
     def _wheel(self, delta):
-        mk = self._mk_()
-        if hasattr(mk, "wheel"):
-            mk.wheel(up=delta > 0)
-        else:
-            x, y = mk._pos
-            self._win.post_message(0x020A, (delta & 0xFFFF) << 16, (y & 0xFFFF) << 16 | (x & 0xFFFF))
-
-    def _post(self, msg, wp, x, y):
-        """裸按钮事件: dx 通道走 host 命令, 前台通道走 SendInput, 其余 PostMessage。"""
-        if self._dxmk is not None:
-            from .dx.host import M_LDOWN, M_LUP, M_MDOWN, M_MUP, M_RDOWN, M_RUP
-            op = {0x0201: M_LDOWN, 0x0202: M_LUP, 0x0204: M_RDOWN,
-                  0x0205: M_RUP, 0x0207: M_MDOWN, 0x0208: M_MUP}[msg]
-            self._dx.mouse(x, y, op)
-        elif self._mk is not None and hasattr(self._mk, "left_down"):
-            getattr(self._mk, {0x0201: "left_down", 0x0202: "left_up",
-                               0x0204: "right_down", 0x0205: "right_up",
-                               0x0207: "middle_down", 0x0208: "middle_up"}[msg])()
-        else:
-            self._win.post_message(msg, wp, (y & 0xFFFF) << 16 | (x & 0xFFFF))
+        self._mk_().wheel(up=delta > 0)
 
     def KeyPress(self, vk):
         """按键。windows 通道 = 带扫描码的消息按键(只达读消息的窗口过程, 轮询型
@@ -546,7 +513,7 @@ class DmSoft:
             ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
             return pt.x, pt.y
         # 走到这说明 _mk_() 会因键鼠通道未绑直接 raise, 没有 None 回退路径
-        return self._mk_()._pos
+        return self._mk_().pos
 
     # ================= 窗口(核心) =================
     def FindWindow(self, class_name, title="") -> int:
@@ -560,16 +527,10 @@ class DmSoft:
         return w.hwnd if w else 0
 
     def GetWindowClass(self, hwnd) -> str:
-        buf = __import__("ctypes").create_unicode_buffer(256)
-        __import__("ctypes").windll.user32.GetClassNameW(hwnd, buf, 256)
-        return buf.value
+        return GameWindow(hwnd).window_class()
 
     def GetWindowTitle(self, hwnd) -> str:
-        u = __import__("ctypes").windll.user32
-        n = u.GetWindowTextLengthW(hwnd)
-        buf = __import__("ctypes").create_unicode_buffer(n + 1)
-        u.GetWindowTextW(hwnd, buf, n + 1)
-        return buf.value
+        return GameWindow(hwnd).window_title()
 
     def GetWindowRect(self, hwnd):
         w = GameWindow(hwnd)
@@ -592,8 +553,7 @@ class DmSoft:
         return x - rx, y - ry
 
     def MoveWindow(self, hwnd, x, y) -> int:
-        import ctypes
-        ctypes.windll.user32.SetWindowPos(hwnd, None, x, y, 0, 0, 0x0001 | 0x0004)
+        GameWindow(hwnd).move(x, y)
         return 1
 
     def SetWindowState(self, hwnd: int, flag: int) -> int:
@@ -636,8 +596,8 @@ class DmSoft:
         return GameWindow(hwnd).process_path()
 
     def GetForegroundWindow(self) -> int:
-        import ctypes
-        return ctypes.windll.user32.GetForegroundWindow() or 0
+        from .win32.window import foreground_window
+        return foreground_window()
 
     # ================= 基本设置 =================
     def SetPath(self, path) -> int:

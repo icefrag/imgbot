@@ -9,3 +9,4 @@ imgbot/dx/bin/
 logs/
 .elework/
 imgbot/dx/native/obfstrings.gen.h
+imgbot/dx/native/proto.gen.h

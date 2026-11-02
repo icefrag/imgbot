@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """dx 注入通道宿主侧: 建共享内存 -> 注入 dmcore -> 心跳/命令 -> 取帧.
 
-协议(与 dx/native/dmcore.c 同步改):
-- 共享内存 "Local\\imgbotdx_{pid}", 32MB; 头 30 个 DWORD(120B), 帧区偏移 4096。
-- 纯轮询: 宿主写 cmd+cmd_seq, DLL 执行后写 ack_result+ack_seq; 心跳=heartbeat
-  计数持续增长; 帧=frame_seq 递增(BGRA/RGB8, 行序自底向上, 取出时翻正)。
-命令: PING=1 BYE=2 HOOK_GL=3 BIND=4 KEY=5 MOUSE=6 RAWINFO=7 FAKE_ACTIVE=8
-HIDE=9 HOOK_D3D9=10 KEYSTATE=11 MOUSE_LOCK=12 MOUSE_PACK=13。版本号(第2 DWORD)
-改协议必须两端同步+1(当前 8)。
+协议单源在 proto.py(命令码/头布局/版本): 本模块消费之, dmcore.c 消费构建期
+生成的 proto.gen.h —— 两端不再各写一份常量。纯轮询: 宿主写 cmd+cmd_seq, DLL
+执行后写 ack_result+ack_seq; 心跳=heartbeat 持续增长; 帧=frame_seq 递增
+(BGRA/RGB8, 行序自底向上, 取出时翻正)。
 """
 from __future__ import annotations
 
@@ -20,24 +17,19 @@ from pathlib import Path
 import numpy as np
 
 from ..win32.window import WindowLostError
+from .proto import (CMD_BIND, CMD_BYE, CMD_FAKE_ACTIVE, CMD_HIDE, CMD_HOOK_D3D9,
+                    CMD_HOOK_GL, CMD_KEY, CMD_KEYSTATE, CMD_MOUSE, CMD_MOUSE_LOCK,
+                    CMD_MOUSE_PACK, CMD_PING, CMD_RAWINFO, FRAME_OFF, FIELD_NAMES,
+                    HEADER_SIZE, KEY_CHAR, KEY_DOWN, KEY_UP, M_DBLCLK, M_LDOWN,
+                    M_LUP, M_MDOWN, M_MOVE, M_MUP, M_RDOWN, M_RUP, M_WHEEL_DOWN,
+                    M_WHEEL_UP, OFF, PROTO_VERSION, SHM_MAGIC, SHM_SIZE)
+# 常量再导出: dx.input / 脚本一直 `from .host import M_*` 拿, 导入面不变
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-SHM_SIZE = 32 * 1024 * 1024
-FRAME_OFF = 4096
-MAGIC = 0x49425844
 PAGE_READWRITE = 0x04
 FILE_MAP_ALL_ACCESS = 0xF001F
 
-CMD_PING, CMD_BYE, CMD_HOOK_GL = 1, 2, 3
-CMD_BIND, CMD_KEY, CMD_MOUSE = 4, 5, 6
-CMD_RAWINFO, CMD_FAKE_ACTIVE, CMD_HIDE, CMD_HOOK_D3D9 = 7, 8, 9, 10
-CMD_KEYSTATE, CMD_MOUSE_LOCK, CMD_MOUSE_PACK = 11, 12, 13
-KEY_DOWN, KEY_UP, KEY_CHAR = 0, 1, 2
-M_MOVE, M_LDOWN, M_LUP = 0, 1, 2
-M_RDOWN, M_RUP, M_MDOWN, M_MUP = 3, 4, 5, 6
-M_DBLCLK = 7
-M_WHEEL_UP, M_WHEEL_DOWN = 9, 10
 HOOK_ERRORS = {
     20: "目标未加载 opengl32", 21: "GL 函数解析失败",
     22: "SwapBuffers 导出解析失败", 31: "函数前导无热补丁哨兵(x64 未实现)",
@@ -115,11 +107,13 @@ class DxHost:
         self._view = k32.MapViewOfFile(self._map, FILE_MAP_ALL_ACCESS, 0, 0, SHM_SIZE)
         if not self._view:
             raise OSError(f"MapViewOfFile 失败: {ctypes.get_last_error()}")
-        struct.pack_into("<30I", (ctypes.c_char * SHM_SIZE).from_address(self._view),
-                         0, MAGIC, 8, *([0] * 28))
+        struct.pack_into(f"<{HEADER_SIZE // 4}I",
+                         (ctypes.c_char * SHM_SIZE).from_address(self._view),
+                         0, SHM_MAGIC, PROTO_VERSION, *([0] * (HEADER_SIZE // 4 - 2)))
         def inject_once():
             r = subprocess.run([str(self._injector), str(self.pid), str(self._dll)],
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, timeout=30,
+                               creationflags=subprocess.CREATE_NO_WINDOW)  # 防无控制台宿主闪终端
             out = r.stdout.strip()
             if not out.startswith("OK"):
                 raise RuntimeError(f"注入失败: {out} {r.stderr.strip()}")
@@ -141,7 +135,7 @@ class DxHost:
             if rc != 0:
                 raise RuntimeError(
                     f"DxInit 返回 {rc}(5=线程/互斥体失败 6=旧实例未退干净, 重启目标进程可解)")
-            self._wait(lambda: self.hdr[3] > 0, timeout,
+            self._wait(lambda: self.heartbeat > 0, timeout,
                        "心跳未出现(注入后 DLL 未挂上共享内存)")
         except Exception:
             k32.UnmapViewOfFile(self._view)
@@ -162,16 +156,16 @@ class DxHost:
             return
         try:
             magic = struct.unpack_from("<I", (ctypes.c_char * 4).from_address(view))[0]
-            if magic != MAGIC:
+            if magic != SHM_MAGIC:
                 return
             # 旧 worker 活着才会应答; 死实例的残留 mapping 由引用计数自然消亡
-            base = (ctypes.c_char * 120).from_address(view)
-            cur = struct.unpack("<30I", bytes(base))
-            struct.pack_into("<4I", base, 16, CMD_BYE, cur[5] + 1, cur[6], cur[7])
+            base = (ctypes.c_char * HEADER_SIZE).from_address(view)
+            cur = _hdr_at(view)
+            struct.pack_into("<4I", base, OFF["cmd"], CMD_BYE,
+                             cur["cmd_seq"] + 1, cur["ack_seq"], cur["ack_result"])
             deadline = time.monotonic() + 1.0
             while time.monotonic() < deadline:
-                now = struct.unpack("<30I", bytes(base))
-                if now[6] == cur[5] + 1:
+                if _hdr_at(view)["ack_seq"] == cur["cmd_seq"] + 1:
                     time.sleep(0.15)          # 等它退线程/放互斥体
                     return
                 time.sleep(0.02)
@@ -195,29 +189,32 @@ class DxHost:
                 self._map = None
 
     # -- 观测与命令 ----------------------------------------------------
-    @property
-    def hdr(self):
-        """头 19 个 DWORD 活视图: [magic,ver,state,heart, cmd,seq,ack,res,
-        fseq,w,h,fmt, swap_calls,gl_err,vp_w,vp_h, arg0,arg1, msg_filtered]"""
+    @staticmethod
+    def _hdr_at(view) -> dict[str, int]:
+        """整头快照 {字段名: 值}; 布局单源在 proto.HEADER_FIELDS。"""
+        buf = (ctypes.c_char * HEADER_SIZE).from_address(view)
+        return dict(zip(FIELD_NAMES, struct.unpack(f"<{HEADER_SIZE // 4}I", bytes(buf))))
+
+    def _hdr(self) -> dict[str, int]:
         if self._view is None:
             raise RuntimeError("未 attach")
-        buf = (ctypes.c_char * 120).from_address(self._view)
-        return struct.unpack("<30I", bytes(buf))
+        return self._hdr_at(self._view)
 
     def _cmd(self, cmd: int, arg0: int = 0, arg1: int = 0,
              timeout: float = 3.0) -> int:
         if self._view is None:
             raise RuntimeError("未 attach")
-        base = (ctypes.c_char * 120).from_address(self._view)
-        cur = struct.unpack("<30I", bytes(base))
-        seq = cur[5]
-        struct.pack_into("<2I", base, 64, arg0 & 0xFFFFFFFF, arg1 & 0xFFFFFFFF)
-        struct.pack_into("<4I", base, 16, cmd, seq + 1, cur[6], cur[7])
+        base = (ctypes.c_char * HEADER_SIZE).from_address(self._view)
+        cur = self._hdr()
+        seq = cur["cmd_seq"]
+        struct.pack_into("<2I", base, OFF["arg0"], arg0 & 0xFFFFFFFF, arg1 & 0xFFFFFFFF)
+        struct.pack_into("<4I", base, OFF["cmd"], cmd, seq + 1,
+                         cur["ack_seq"], cur["ack_result"])
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            now = self.hdr
-            if now[6] == seq + 1:
-                return now[7]
+            now = self._hdr()
+            if now["ack_seq"] == seq + 1:
+                return now["ack_result"]
             time.sleep(0.01)
         raise TimeoutError(f"命令 {cmd} 无应答(DLL 卡死或已卸载)")
 
@@ -258,7 +255,7 @@ class DxHost:
         """dx 鼠标全家桶(大漠"常用 dx 鼠标属性"7 属性预设): 键态+光标锁之上,
         一键武装 GetCapture 虚拟化(input.lock)/GetCursorInfo 改写(cursor)/
         ClipCursor 吞噬(clip.lock)/取消息层位置钉死(position.lock.message)。
-        rc=0 全装; 非 0=第一个失败钩(部分武装照常生效), hdr[17]=武装位图
+        rc=0 全装; 非 0=第一个失败钩(部分武装照常生效), args()[1]=武装位图
         (bit0 键态 bit1 光标 bit2 capture bit3 cursorinfo bit4 clip bit5-8
         PeekW/PeekA/GetW/GetA)。仅 x86。"""
         return self._cmd(CMD_MOUSE_PACK, 1 if enable else 0)
@@ -305,26 +302,49 @@ class DxHost:
         return rc
 
     @property
+    def heartbeat(self) -> int:
+        """DLL 心跳计数(持续增长 = worker 活着)。"""
+        return self._hdr()["heartbeat"]
+
+    @property
+    def viewport(self) -> tuple[int, int]:
+        """最后捕获视口 (w, h)(诊断)。"""
+        h = self._hdr()
+        return h["vp_w"], h["vp_h"]
+
+    def args(self) -> tuple[int, int]:
+        """命令参数/结果槽 (arg0, arg1) 当前值 —— 多路复用: RAWINFO 结果/
+        MOUSE_PACK 武装位图/HIDE 按名解析探针都落这里, 跟对应命令后读。"""
+        h = self._hdr()
+        return h["arg0"], h["arg1"]
+
+    @property
+    def crash(self) -> tuple[int, int]:
+        """VEH 首例 (code, addr); addr=0 无崩溃(环形明细在头后 ring 区)。"""
+        h = self._hdr()
+        return h["crash_code"], h["crash_addr"]
+
+    @property
     def msg_filtered(self) -> int:
         """假激活已吞掉的失焦/失活消息数。"""
-        return self.hdr[18]
+        return self._hdr()["msg_filtered"]
 
     @property
     def swap_calls(self) -> int:
         """换帧钩子被调用次数(GL/d3d9 共用; 0=钩子没被走到)。"""
-        return self.hdr[12]
+        return self._hdr()["swap_calls"]
 
     @property
     def last_err(self) -> int:
         """钩子最后一次记录的错误码(面包屑)。"""
-        return self.hdr[13]
+        return self._hdr()["gl_err"]
 
     def rawinfo(self) -> dict:
         """目标进程 raw input 注册情况(诊断: 判断消息免疫根因)。"""
         self._cmd(CMD_RAWINFO)
-        h = self.hdr
-        return {"target_hwnd": h[16], "devices": h[17] >> 16,
-                "with_target": h[17] & 0xFFFF}
+        a0, a1 = self.args()
+        return {"target_hwnd": a0, "devices": a1 >> 16,
+                "with_target": a1 & 0xFFFF}
 
     @staticmethod
     def _check(rc: int, cmd: int):
@@ -336,8 +356,8 @@ class DxHost:
 
     def frame_info(self) -> tuple[int, int, int, int]:
         """(frame_seq, w, h, fmt); frame_seq 不再增长=渲染停了。"""
-        h = self.hdr
-        return h[8], h[9], h[10], h[11]
+        h = self._hdr()
+        return h["frame_seq"], h["frame_w"], h["frame_h"], h["frame_fmt"]
 
     def capture(self, fresh_wait: float = 1.0) -> np.ndarray:
         """取最新帧为 BGR ndarray; fresh_wait 内无新帧则取现存帧(可能旧)。"""

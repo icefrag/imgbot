@@ -69,9 +69,39 @@ def gen_obf_header(native: Path):
     print(f"+ gen obfstrings.gen.h ({len(OBF_STRS)} 串)")
 
 
+def gen_proto_header(native: Path):
+    """生成 proto.gen.h: dmcore.c 的命令码/头结构从 imgbot/dx/proto.py 单源来。
+    协议扩展只改 proto.py, 重新构建即两端同步(替代宿主/注入件两份手写常量
+    —— 大漠 0x8b0 段漂移的教训)。"""
+    import sys
+    sys.path.insert(0, str(native.parents[2]))          # 仓根, 导入 imgbot 包
+    from imgbot.dx import proto
+    out = ["/* proto.gen.h -- build.py 自动生成自 imgbot/dx/proto.py, 勿手改勿提交。 */",
+           "#ifndef PROTO_GEN_H", "#define PROTO_GEN_H", "",
+           f"#define SHM_MAGIC   {proto.SHM_MAGIC}u",
+           f"#define PROTO_VERSION {proto.PROTO_VERSION}",
+           f"#define SHM_SIZE    {proto.SHM_SIZE}",
+           f"#define FRAME_OFF   {proto.FRAME_OFF}",
+           "#define FRAME_CAP   (SHM_SIZE - FRAME_OFF)", ""]
+    for name, val in vars(proto).items():
+        if name.startswith(("CMD_", "KEY_", "M_")) and isinstance(val, int):
+            out.append(f"#define {name} {val}")
+    out.append("")
+    out.append("typedef struct {")
+    for fname, cnt in proto.HEADER_FIELDS:
+        out.append(f"    DWORD {fname};" if cnt == 1 else f"    DWORD {fname}[{cnt}];")
+    out.append("} Header;")
+    out.append("")
+    out.append(f'_Static_assert(sizeof(Header) == {proto.HEADER_SIZE}, "proto layout drift");')
+    out.append("#endif")
+    (native / "proto.gen.h").write_text("\n".join(out) + "\n", encoding="utf-8")
+    print(f"+ gen proto.gen.h (ver={proto.PROTO_VERSION}, {len(proto.HEADER_FIELDS)} 字段)")
+
+
 def build(zig: str):
     BIN.mkdir(exist_ok=True)
     gen_obf_header(NATIVE)
+    gen_proto_header(NATIVE)
     targets = [("x86-windows", "32"), ("x86_64-windows", "64")]
     for target, tag in targets:
         for src, kind in (("dmcore.c", "dll"), ("injector.c", "exe")):

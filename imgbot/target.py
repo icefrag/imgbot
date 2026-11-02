@@ -109,11 +109,8 @@ class Win32Target(Target):
         self.mk.click(x, y)
 
     def drag(self, x1: int, y1: int, x2: int, y2: int, ms: int = 300):
-        """后台拖拽(dx 通道); postmessage 通道未实现。"""
-        if hasattr(self.mk, "drag"):
-            self.mk.drag(x1, y1, x2, y2, steps=max(6, ms // 25))
-        else:
-            raise NotImplementedError("postmessage 通道拖拽未实现, 用 input='dx'")
+        """后台拖拽(直线插值, 三通道同形; postmessage/dx 均可)。"""
+        self.mk.drag(x1, y1, x2, y2, steps=max(6, ms // 25))
 
     def keyevent(self, code: int):
         """按键(统一入口)。windows/dx/normal 通道均可; 消息按键只达读消息的窗口过程。"""
@@ -121,10 +118,7 @@ class Win32Target(Target):
 
     def key_tap(self, vk: int):
         """后台按键。windows 通道 = 带扫描码的消息键(轮询型游戏免疫, 那种用 dx)。"""
-        if hasattr(self.mk, "key_tap"):
-            self.mk.key_tap(vk)
-        else:
-            raise NotImplementedError("当前键鼠通道无 key_tap")
+        self.mk.key_tap(vk)
 
     def double_click(self, x: int, y: int):
         self.mk.double_click(x, y)

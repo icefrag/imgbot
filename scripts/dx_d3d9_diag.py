@@ -89,22 +89,23 @@ def main():
             print(f"hook_d3d9 OK mask={mask:#x}, 等帧流/崩溃... ({len(mods)} 模块)")
             deadline = time.time() + 15
             while time.time() < deadline:
-                h = host.hdr
-                if h[20]:                     # crash_addr
+                h = host._hdr()
+                if h["crash_addr"]:
                     break
-                if h[12] > 4:                 # Present 活过 4 帧 = 该掩码下没崩
+                if h["swap_calls"] > 4:           # Present 活过 4 帧 = 该掩码下没崩
                     break
                 time.sleep(0.2)
             time.sleep(0.5)                   # 让 VEH 落笔
-            h = host.hdr
+            h = host._hdr()
             d = diag_words(host)
-            verdict = f"CRASH @{hx(d[0])}" if h[20] else f"OK(swap_calls={h[12]})"
-            print(f"mask={mask:#x} -> {verdict} frame_seq={h[8]} err={hx(h[13])}")
+            verdict = (f"CRASH @{hx(d[0])}" if h["crash_addr"]
+                       else f"OK(swap_calls={h['swap_calls']})")
+            print(f"mask={mask:#x} -> {verdict} frame_seq={h['frame_seq']} err={hx(h['gl_err'])}")
             eip = d[0]
-            if not h[20]:
+            if not h["crash_addr"]:
                 return 0
-            print(f"crash: code={hx(h[19])} addr={hx(h[20])} self_base={hx(h[21])}")
-            print(f"ring: {[(hx(h[22+i*2]), hx(h[23+i*2])) for i in range(4)]}")
+            print(f"crash: code={hx(h['crash_code'])} addr={hx(h['crash_addr'])} self_base={hx(h['self_base'])}")
+            print(f"ring: {[(hx(h[f'ring{i*2}']), hx(h[f'ring{i*2+1}'])) for i in range(4)]}")
             print(f"Eip={hx(eip)} 崩溃线程={d[16]} present线程={d[55]} Esp={hx(d[17])} "
                   f"enterCount={d[23]}(diag59={d[59]})")
             n = d[62]

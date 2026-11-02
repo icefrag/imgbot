@@ -67,15 +67,16 @@
 | `read_digits(scene, templates, threshold=0.8) -> str` | `templates={字符: ndarray 或 [ndarray,...]}`; 放大 4x + 逐字匹配 + NMS, 按 x 拼字符串 |
 | `enlarge(scene, factor=4)` | 放大(读数管线内用) |
 
-## `imgbot/ops.py` —— 图色门面(DmSoft 之上的高频组合层, 通道无关)
+## `imgbot/ops.py` —— 图色门面(高频组合层, 帧源 seam 之上)
 
-`Ops(dm)`: 构造吃一个 DmSoft 绑定(normal/gdi/windows/dx 任选)。
-规矩: 等待必有 timeout 且超时安静返回; 等待族拒绝进 same_frame 窗口(防复读旧帧);
-停止信号先于命中检查; wait_pic/wait_pic_any/wait_text 超时自动截图留痕 logs/shots/。
-裸输入不进门面(直接 `dm.MoveTo/dm.LeftClick/KeyPress`)。
+`Ops(dm)`: 构造吃一个**帧源**(见 `FrameSource`, DmSoft 结构化满足; 测试可喂假
+adapter, 见 selfcheck)。规矩: 等待必有 timeout 且超时安静返回; 等待族拒绝进
+same_frame 窗口(防复读旧帧); 停止信号先于命中检查; wait_pic/wait_pic_any/wait_text
+超时自动截图留痕 logs/shots/。裸输入不进门面(直接 `dm.MoveTo/dm.LeftClick/KeyPress`)。
 
 | API | 返回 | 说明 |
 |---|---|---|
+| `FrameSource` | 协议 | 帧源 seam: `screen()` 取一帧 + `keymouse`(click/drag) + `GetBindWindow/GetClientSize`(swipe 几何) |
 | `wait_until(fn, timeout, interval=0.3, stop=None)` | bool | 通用轮询底座(A/B 族地基), 停止优先 |
 | `same_frame()` | 上下文 | 一帧多查窗口: 窗内查询共用冻结帧, 出窗现截 |
 | `retry(fn, times=3, backoff=1.0)` | bool | 动作级重试(退避), 管"做到为止" |
@@ -162,14 +163,15 @@
 | `window.GameWindow.from_cursor(root=True)` | 鼠标所在窗口; root=False 取光标下直接窗口(大漠式拾取, 模拟器拿到内层渲染窗口) |
 | `window.list_windows()` | 所有可见有标题的顶层窗口 `[(hwnd, 类名, 标题)]`, 人工选绑列表用 |
 | `window.xor_frame(rect)` | 屏幕坐标矩形(l,t,r,b) XOR 反色描 2px 框(拾取高亮); 同矩形再调一次即擦除 |
-| `window.GameWindow` 实例 | `client_rect()`、`window_rect()`(完整窗口矩形, 拾取高亮用)、`is_alive()`、`is_hung()`、`info()`、`pid()`、`process_path()`、`resize_client_to((w,h))`、`post_message(...)`、`is_pseudo_minimized`(属性) |
+| `window.GameWindow` 实例 | `client_rect()`、`window_rect()`(完整窗口矩形, 拾取高亮用)、`window_class()`、`window_title()`、`move(x, y)`、`is_alive()`、`is_hung()`、`info()`、`pid()`、`process_path()`、`resize_client_to((w,h))`、`post_message(...)`、`is_pseudo_minimized`(属性) |
 | `window.GameWindow.park_offscreen(park: bool)` | 伪后台停靠: 挪到屏外只留 2×30px 缝(**完全离屏会触发 DXGI 节流致截图变暗**) |
-| `window.is_elevated()` / `window.ensure_dpi_aware()` | UIPI 同级检查 / DPI 感知(非 100% 缩放时坐标会错) |
+| `window.is_elevated()` / `window.ensure_dpi_aware()` / `window.foreground_window()` | UIPI 同级检查 / DPI 感知(非 100% 缩放时坐标会错) / 当前前台窗口句柄(无则 0) |
 | `capture.capture_client(window) -> BGR ndarray` | 后台截图(PrintWindow); 真最小化自动 SW_RESTORE 重试 |
 | `capture.capture_screen(rect=None) -> BGR ndarray` | 前台屏幕截取(微信截图底层); `rect=(x,y,w,h)` 屏幕坐标(可为负原点), None=整个虚拟屏幕; 遮挡即所得 |
 | `capture.virtual_screen_rect() -> (x, y, w, h)` | 多屏虚拟屏幕矩形(原点可为负, 主屏左上恒 0,0) |
-| `input.MouseKeyboard(window, inter_action_delay=0.05, rng=None)` | `click`/`double_click`/`move`/`hover`/`type_text`(WM_CHAR 逐码元) —— 拟人贝塞尔轨迹 |
-| `input.SendInputMouseKeyboard(window, inter_action_delay=0.05, rng=None)` | 前台键鼠(SendInput 真事件): 同 API 形状 + `key_tap`/`key_down`/`key_up`(扫描码裸键); `type_text` 用 KEYEVENTF UNICODE(IME 免疫); 动真光标, 单开专用 |
+| `input.BaseMouseKeyboard` | 三通道键鼠基类(PostMessage/SendInput/潜影dx 共用): 拟人节奏(轨迹→停顿→按下→延时→抬起/双击/拖拽插值/打字码元)与虚拟光标记账单源; 公开面 `pos`(属性) + click/right_click/middle_click/double_click/drag/wheel/hover/move + left_down…middle_up(裸按钮) + key_tap/key_down/key_up/type_text |
+| `input.MouseKeyboard(window, inter_action_delay=0.05, rng=None)` | 后台键鼠(PostMessage 通道), 全表面同基类; 消息只达读消息循环的窗口过程(轮询型游戏换 dx) |
+| `input.SendInputMouseKeyboard(window, inter_action_delay=0.05, rng=None)` | 前台键鼠(SendInput 真事件): 全表面同基类; `type_text` 用 KEYEVENTF UNICODE(IME 免疫); 动真光标, 单开专用 |
 | `input.send_paste(window, text)` | 剪贴板 + WM_PASTE(中文一次到位, 比逐字符稳) |
 | `input.send_ime_string(window, text)` | WM_IME_CHAR + GBK 字节大端打包(大漠 SendString 真身配方, 老 ANSI 窗口 WM_CHAR 打不进字时用) |
 | `window.set_window_state(hwnd, flag)` | 窗口状态操作(大漠 SetWindowState 0-14 口径: 0 关闭/1 激活/2 最小化/3 最小化+释放内存/4 最大化/5 恢复/6 隐藏/7 显示/8 置顶/9 取消置顶/10 禁用/11 解禁/12 恢复并激活/13 强杀进程/14 闪烁); 激活/置顶族是顶层语义, 子窗句柄请先取根(GetAncestor GA_ROOT) |
