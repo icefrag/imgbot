@@ -83,14 +83,17 @@ def raw_texts(screen_bgr, region=None, fast: bool = False):
     return [(text, conf) for _, text, conf in result or []]
 
 
-def find_texts(screen_bgr, keyword: str, region=None, min_ratio: float = 0.7):
-    """OCR 找**所有**像 keyword 的文字(同名按钮/多处命中), 按 y 排序返回 [(x, y, 相似度)]."""
-    out = [(x, y, r) for x, y, text in _run_ocr(screen_bgr, region)
+def find_texts(screen_bgr, keyword: str, region=None, min_ratio: float = 0.7,
+               fast: bool = False):
+    """OCR 找**所有**像 keyword 的文字(同名按钮/多处命中), 按 y 排序返回 [(x, y, 相似度)].
+    fast=True 走快引擎: 大字按钮(领奖/确定类)正合快引擎口径, 大区域也能 ~0.3s/拍."""
+    out = [(x, y, r) for x, y, text in _run_ocr(screen_bgr, region, fast)
            if (r := _ratio(keyword, text)) >= min_ratio]
     out.sort(key=lambda t: t[1])
     return out
 
 
-def find_text(screen_bgr, keyword: str, region=None, min_ratio: float = 0.7):
+def find_text(screen_bgr, keyword: str, region=None, min_ratio: float = 0.7,
+              fast: bool = False):
     """OCR 在 region(None=全屏)内找最像 keyword 的文字, 返回(中心x, 中心y, 相似度)或 None."""
-    return best_match(_run_ocr(screen_bgr, region), keyword, min_ratio)
+    return best_match(_run_ocr(screen_bgr, region, fast), keyword, min_ratio)

@@ -140,6 +140,7 @@ same_frame 窗口(防复读旧帧); 停止信号先于命中检查; wait_pic/wai
 |---|---|
 | `AdbDevice(serial, adb_path="adb")` | 设备命令全带 `-s <serial>`; `screenshot() -> bytes`(必须 exec-out)、`save_screenshot(path)`、`tap`、`swipe`、`keyevent`、`shell(*args)`、`install(apk)`、`start_app`、`stop_app` |
 | `list_devices(adb_path="adb") -> list[str]` | 在线设备序列号 |
+| `resolve_adb(adb_path="adb") -> str` | 裸名 "adb" 先找宿主 exe 旁随包 platform-tools, 找不到退 PATH; 显式路径直通 |
 | `adb(adb_path, *args) -> str` | 无 `-s` 的全局 adb 命令 |
 | `png_size(png_bytes) -> (w, h)` | 从 PNG 头解析(不引 numpy/cv2) |
 | `parse_devices(text) -> list[str]` | 解析 `adb devices` 输出 |
