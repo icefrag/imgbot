@@ -152,6 +152,16 @@ def main():
         "List of devices attached\n"
         "emulator-5554\tdevice\n"
     ) == ["emulator-5554"]
+    # resolve_adb: 裸名先找宿主 exe 旁(产品把 adb.exe 摆 exe 目录, 用户机免装
+    # platform-tools), 找不到退 PATH 裸名; 显式路径直通(2026-11-03 用户侧
+    # FileNotFoundError 案防回归)
+    _ad = Path(tempfile.mkdtemp())
+    _explicit = str(_ad / "adb.exe")
+    assert adb_mod.resolve_adb(_explicit) == _explicit
+    with mock.patch.object(adb_mod.sys, "executable", str(_ad / "host.exe")):
+        assert adb_mod.resolve_adb("adb") == "adb"
+        (_ad / "adb.exe").write_bytes(b"")
+        assert adb_mod.resolve_adb("adb") == str(_ad / "adb.exe")
 
     # ---- 模板匹配 ----
     rng = np.random.default_rng(7)

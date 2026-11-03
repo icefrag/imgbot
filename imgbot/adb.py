@@ -10,6 +10,17 @@ from pathlib import Path
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
+def resolve_adb(adb_path: str = "adb") -> str:
+    """裸名 "adb" 的可执行文件解析(2026-11-03 moshen2 用户侧 FileNotFoundError 案:
+    最终用户机器普遍没装 platform-tools): 先取宿主 exe 旁的 adb.exe(冻结产品把
+    platform-tools 的 adb.exe+配套 DLL 摆 exe 目录, 用户免装环境), 没有再退 PATH
+    (找不到由调用处报错, 提示语不变)。显式路径(含目录分隔)原样放行。"""
+    if sys.platform != "win32" or Path(adb_path).name != adb_path:
+        return adb_path
+    beside = Path(sys.executable).parent / "adb.exe"  # 冻结态=exe 目录; 源码跑=解释器目录(通常没有, 自然落 PATH)
+    return str(beside) if beside.is_file() else adb_path
+
+
 class AdbError(RuntimeError):
     pass
 
@@ -23,7 +34,7 @@ class AdbDevice:
 
     def __init__(self, serial: str, adb_path: str = "adb"):
         self.serial = serial
-        self.adb_path = adb_path
+        self.adb_path = resolve_adb(adb_path)
 
     def _run(self, *args: str, timeout: float = 15) -> bytes:
         """执行 adb 命令, 失败重试 1 次."""
@@ -88,6 +99,7 @@ def png_size(png: bytes) -> tuple[int, int]:
 
 def adb(adb_path: str, *args: str, timeout: float = 15) -> str:
     """无 -s 的全局 adb 命令(connect / devices 等)."""
+    adb_path = resolve_adb(adb_path)
     try:
         r = subprocess.run([adb_path, *args], capture_output=True, timeout=timeout, creationflags=_NO_WINDOW)
     except (subprocess.TimeoutExpired, OSError) as e:
