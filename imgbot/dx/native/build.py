@@ -29,6 +29,10 @@ OBF_STRS = [
     ("GETMESSAGEW", "GetMessageW"), ("GETMESSAGEA", "GetMessageA"),
     ("GETFOREGROUNDWINDOW", "GetForegroundWindow"), ("GETACTIVEWINDOW", "GetActiveWindow"),
     ("GETFOCUS", "GetFocus"), ("GETGUIThreadINFO", "GetGUIThreadInfo"),
+    ("KERNEL32", "kernel32.dll"), ("WINMM", "winmm.dll"),
+    ("GETTICKCOUNT", "GetTickCount"),
+    ("QUERYPERFORMANCECOUNTER", "QueryPerformanceCounter"),
+    ("TIMEGETTIME", "timeGetTime"),
     ("SHM_FMT", "Local\\imgbotdx_%u"), ("MUTEX_FMT", "Local\\imgbotdx_%u_lk"),
 ]
 
@@ -102,14 +106,26 @@ def build(zig: str):
     BIN.mkdir(exist_ok=True)
     gen_obf_header(NATIVE)
     gen_proto_header(NATIVE)
+    # MinHook 是变速齿轮的 inline hook 引擎(dm 内置引擎的开源等价物), 随 dmcore
+    # 编入; 保持上游 src/+include/ 布局, hook.c 等以 ../include/MinHook.h 相对寻址
+    MH_SRCS = [NATIVE / "minhook" / "src" / s
+               for s in ("hook.c", "buffer.c", "trampoline.c",
+                         "hde/hde32.c", "hde/hde64.c")]
     targets = [("x86-windows", "32"), ("x86_64-windows", "64")]
     for target, tag in targets:
         for src, kind in (("dmcore.c", "dll"), ("injector.c", "exe")):
             out = BIN / f"{src.split('.')[0]}{tag}.{kind}"
-            cmd = [zig, "cc", "-target", target, "-O2", "-s"]
+            cmd = [zig, "cc", "-target", target, "-O2", "-s", "-o", str(out)]
             if kind == "dll":
-                cmd += ["-shared"]
-            cmd += ["-o", str(out), str(NATIVE / src)]
+                cmd += ["-shared",
+                        # 段级死代码裁剪: MH_StatusToString(未调用)的 "MH_ERROR_*"
+                        # 字面量不落产物 —— 遮蔽串体系(dbd4035)不容明文 API 名回潮
+                        "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                        "-I" + str(NATIVE), "-I" + str(NATIVE / "minhook" / "include"),
+                        str(NATIVE / src)]
+                cmd += [str(s) for s in MH_SRCS]
+            else:
+                cmd += [str(NATIVE / src)]
             print("+", " ".join(cmd))
             subprocess.run(cmd, check=True)
     for junk in BIN.glob("*.pdb"):
@@ -128,6 +144,15 @@ def build(zig: str):
            "-luser32"]
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
+    # 变速齿轮验收靶(32/64)。inline hook(2026-11-04 大漠 1:1 复刻)直接改函数
+    # 本体, -O2 寄存器提升的导入指针(call r12)也走本体 —— 用 -O2 顺手验证该
+    # 性质(旧 IAT 路线被迫 -O0 的约束已随机制消灭)。
+    for target, tag in targets:
+        cmd = [zig, "cc", "-target", target, "-O2", "-s",
+               "-o", str(BIN / f"sptest{tag}.exe"), str(NATIVE / "sptest.c"),
+               "-lwinmm"]
+        print("+", " ".join(cmd))
+        subprocess.run(cmd, check=True)
     # 注入判别探针(x86 only, 诊断用: 远程 LoadLibrary 后查模块落地)
     cmd = [zig, "cc", "-target", "x86-windows", "-O2", "-s",
            "-o", str(BIN / "inject_probe32.exe"), str(NATIVE / "inject_probe.c")]

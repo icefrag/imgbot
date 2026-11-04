@@ -161,7 +161,25 @@
   返回值="之前状态"不是成败/EnableWindow 返回"之前是否禁用"两个坑已绕)、
   EnumWindow 族(filter 位 1/2/8/16/32/64)、LockInput(BlockInput, 锁定需管理员,
   返回值按对象记账幂等化)、SendString ime=True(WM_IME_CHAR+GBK 大端打包, 消息级
-  已验, 渲染级待 ANSI 靶校准)。未复刻保持显式 raise: 变速/驱动键鼠/内存族/字库。
+  已验, 渲染级待 ANSI 靶校准)。未复刻保持显式 raise: 驱动键鼠/内存族/字库。
+- **变速齿轮已对齐大漠真身(2026-11-04, HackSpeed/CMD_SPEED 1:1 复刻, 用户裁定
+  "别自己造轮子")**: 逆向报告 reverse-skill work/speedgear/report.md。dm 配方
+  = inline 钩三钟源**本体**(GetTickCount/QPC/timeGetTime; GetTickCount64 dm
+  不钩对齐不钩, winmm 未加载不强载), 增量缩放累加器 scaled += (now-last)*rate
+  (换档不重扎基线, 结构天然连续), 倍率×10 口径(0x863: 15→1.5x, 10=常速,
+  0=冻结无特判), 解绑只复位 rate=1.0+重扎基线**不摘钩**(钩随 DLL 常驻,
+  FUN_180017f70 尾调 1800189f0 同款)。两处刻意修 dm bug: ①累加器 double 记账
+  出口才取整(dm 逐次截断, 小 delta×非整倍率系统性漂移; 修后实测 999/1000ms
+  分毫不差); ②QPC detour 透传真 BOOL(反编译出口悬空)。引擎 = MinHook 1.3.3
+  vendored(native/minhook/, 保持上游布局; dm 内置指令解码/搬移引擎的开源
+  等价物, 逆向配方原话"MinHook 即可"), kernel32 转发跳 follow_jmp 解到
+  kernelbase/ntdll 真身再挂 —— IAT 槽/GetProcAddress 动态解析/寄存器提升指针
+  全路径覆盖。旧 IAT 路线(2026-11-03 落地即废)三坑随机制消灭: 系统件 IAT
+  成环栈溢出(0xC00000FD)/双真址形态/寄存器提升(zig -O2 call r12); **PEB->Ldr
+  偏移 x64=0x18/x86=0x0C 教训仍管 hide_module**(旧注"x86/x64 同偏移"在 x64
+  上必崩)。烟测 speed_smoke.py 64+32 全绿(3x/换档/复位; 靶 -O2 顺手验寄存器
+  提升也吃)+ selfcheck 全量 + dx 三烟测(notepad/cursor/keystate)过。MinHook
+  "MH_ERROR_*" 字面量 gc-sections 裁净(build.py 探针验证), 遮蔽串体系不回潮。
 - **大漠键鼠反编译对照结论(2026-10-29, dm.dll 7.2642+组件 7.2319; 11-01 二次反编译补)**:
   GetCursorPos=虚拟光标客户区坐标(已对齐, 真人动鼠标不影响读数);
   KeyPress 修饰键 L/R→通用 VK 归一化+虚拟 Alt 追踪(后续键转 SYSKEY, 已对齐

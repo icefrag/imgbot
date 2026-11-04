@@ -17,11 +17,14 @@
  * GetCapture 虚拟化/GetCursorInfo 改写/ClipCursor 吞噬/取消息层位置钉死 ——
  * 大漠"常用 dx 鼠标属性"7 属性预设的潜影对应物, 反编译 7.2319 组件对齐,
  * 2026-11-01 华夏后台点击攻坚落地)。
+ * 变速: CMD_SPEED 大漠 HackSpeed 1:1 复刻(2026-11-04 逆向)—— MinHook inline
+ * 钩 GTC/QPC/timeGetTime 本体, 增量缩放累加, 倍率×10 口径, 解绑复位不摘钩。
  * 协议/布局见 host.py 头注释, 两端必须同步改。
  */
 #include <windows.h>
 #include "obfstrings.gen.h"   /* 构建期生成(build.py): 遮蔽串密文+obf_init 解码 */
 #include "proto.gen.h"        /* 构建期生成(build.py): 命令码/头布局, 单源 imgbot/dx/proto.py */
+#include <MinHook.h>           /* inline hook 引擎(变速齿轮用, 大漠内置同款的开源等价物, vendored minhook/) */
 
 #define SMTO_FLAGS (SMTO_ABORTIFHUNG | SMTO_BLOCK)
 
@@ -1092,17 +1095,164 @@ static void unhook_mouse_pack(void)
     unhook_keystate();
 }
 
+/* ---- 变速齿轮(CMD_SPEED): 大漠 HackSpeed 1:1 复刻(逆向 2026-11-04, ----
+ * ---- reverse-skill work/speedgear/report.md + work/dm/decompiled): ----
+ * ----   齿轮核心 = FUN_18001b410(timeGetTime)/b460(QPC)/b4c0(GetTickCount)
+ * ----   缩放累加器 scaled += (now-last)*rate, 换档不重扎基线(结构天然连续);
+ * ----   基线/复位 = FUN_1800189f0: rate 归 1.0 + 各钟源 last=scaled=now;
+ * ----   解绑(FUN_180017f70 尾调 1800189f0)只复位不摘钩 —— 钩随 DLL 常驻,
+ * ----   rate=1.0 恒等透传, dm 同款。
+ * ----   参数口径 = 大漠 0x863: rate = param/10.0, 即"倍率×10"
+ * ----   (15→1.5x, 10→常速, 0→冻结时钟 —— dm 无 0 特判, 原样对齐)。
+ * ---- 钩面 = inline hook 三钟源函数本体(MinHook 引擎 —— dm 内置同款指令
+ * ---- 解码/搬移引擎的开源等价物, 逆向配方原话"MinHook 即可"): kernel32
+ * ---- 出址为转发跳则 follow_jmp 解到 kernelbase/ntdll 真身再挂, IAT 槽/
+ * ---- GetProcAddress 动态解析/CRT 内部直调/寄存器提升指针全路径覆盖(原
+ * ---- IAT 路线的已知盲区一并消除)。GetTickCount64 dm 不钩 → 对齐不钩;
+ * ---- winmm 未加载则 tgt 无钩面不强载(dm 同款, 每次命令重试解析补晚载)。
+ * ---- 对 dm 的两处刻意 bug 修复:
+ * ----   1) 累加器 double 记账出口才取整 —— dm 逐次调用截断, 小 delta×非整
+ * ----      倍率系统性漂移(15.6ms×1.5→23, 每 tick 丢 0.4ms);
+ * ----   2) QPC detour 透传真返回值(反编译出口布尔悬空)。
+ * ---- u32 域(GTC/tgt)回绕 = u32 减法天然同余真 API, 49.7 天回绕无瞬跳
+ * ---- (报告 §六存疑结论不成立, 维持 dm 算法)。 ---- */
+static double g_spRate = 1.0;              /* dm _DAT_180048628(默认 1.0=DAT_180041638) */
+static DWORD    g_tcLast, g_tgtLast;       /* dm _DAT_18007b9b0 / _DAT_18007ae7c */
+static double   g_tcScaled, g_tgtScaled;   /* dm DAT_18007b930  / DAT_18007b0d8 */
+static LONGLONG g_qpcLast;                 /* dm DAT_180076dd8 */
+static double   g_qpcScaled;               /* dm DAT_180076db0 */
+static DWORD (WINAPI *g_realTC)(void);     /* 蹦床真值(MinHook 落钩时填) */
+static BOOL   (WINAPI *g_realQPC)(LARGE_INTEGER *);
+static DWORD (WINAPI *g_realTGT)(void);
+static int g_spHooked;                     /* 三钟源 inline 钩已布 */
+
+/* kernel32 出址常为转发跳(E9/EB/jmp [mem]), 解到真身再挂 = "挂本体"(gdi32!
+ * SwapBuffers 同款思路): 直呼 kernelbase/ntdll 本体的调用方一并覆盖。 */
+static BYTE *follow_jmp(BYTE *p)
+{
+    for (int i = 0; i < 8 && p; i++) {
+        if (p[0] == 0xE9) { INT32 r; memcpy(&r, p + 1, 4); p += 5 + r; }
+        else if (p[0] == 0xEB) { p += 2 + (signed char)p[1]; }
+        else if (p[0] == 0xFF && p[1] == 0x25) {
+#ifdef _WIN64
+            INT32 r; memcpy(&r, p + 2, 4);
+            p = *(BYTE **)(p + 6 + r);            /* x64 裸形态: jmp [rip+rel32] */
+#else
+            DWORD a; memcpy(&a, p + 2, 4);
+            p = *(BYTE **)(uintptr_t)a;           /* x86: imm32 即槽绝对地址 */
+#endif
+        }
+#ifdef _WIN64
+        else if (p[0] == 0x48 && p[1] == 0xFF && p[2] == 0x25) {
+            INT32 r; memcpy(&r, p + 3, 4);
+            p = *(BYTE **)(p + 7 + r);            /* REX.W 7 字节形态(k32!QPC 实测) */
+        }
+#endif
+        else break;
+    }
+    return p;
+}
+
+/* dm FUN_18001b4c0 同构: u32 域 delta 减法与真 API 同余(49.7 天回绕无瞬跳);
+ * double 累计出口取整 = 段头 bug 修复 1 */
+static DWORD WINAPI our_gettickcount(void)
+{
+    DWORD now = g_realTC();
+    DWORD delta = now - g_tcLast;
+    g_tcLast = now;
+    g_tcScaled += (double)delta * g_spRate;
+    return (DWORD)(ULONGLONG)g_tcScaled;
+}
+
+/* dm FUN_18001b460 同构 + bug 修复 2(透传真返回值) */
+static BOOL WINAPI our_qpc(LARGE_INTEGER *out)
+{
+    BOOL ok = g_realQPC(out);
+    if (out) {
+        g_qpcScaled += (double)(out->QuadPart - g_qpcLast) * g_spRate;
+        g_qpcLast = out->QuadPart;
+        out->QuadPart = (LONGLONG)g_qpcScaled;
+    }
+    return ok;
+}
+
+/* dm FUN_18001b410 同构 */
+static DWORD WINAPI our_timegettime(void)
+{
+    DWORD now = g_realTGT();
+    DWORD delta = now - g_tgtLast;
+    g_tgtLast = now;
+    g_tgtScaled += (double)delta * g_spRate;
+    return (DWORD)(ULONGLONG)g_tgtScaled;
+}
+
+/* dm FUN_1800189f0 的变速子集: rate 归 1.0 + 各钟源 last=scaled=now。
+ * 蹦床真值在 MH_CreateHook 后即可调(走原前导), 复位在 Enable 前完成,
+ * 首 hook 命中即从当下增量累计 —— 时间轴无缝。 */
+static void speed_reset(void)
+{
+    g_spRate = 1.0;
+    if (g_realTC) { DWORD n = g_realTC(); g_tcLast = n; g_tcScaled = (double)n; }
+    if (g_realQPC) {
+        LARGE_INTEGER q;
+        if (g_realQPC(&q)) { g_qpcLast = q.QuadPart; g_qpcScaled = (double)q.QuadPart; }
+    }
+    if (g_realTGT) { DWORD n = g_realTGT(); g_tgtLast = n; g_tgtScaled = (double)n; }
+}
+
+/* 装钩(首次设速时 = dm 带 dx.public.hack.speed 的绑定流程等价物):
+ * 解析三钟源本体 → MinHook 落钩 → 蹦床扎基线 → 全体 Enable。
+ * 0=成功, 150=MinHook 落钩/使能失败, 151=钟源解析失败; tgt 失败不致命
+ * (dm 同款可两源跑), 且未装钩前每次命令都会重走到这里(补 winmm 晚载)。 */
+static int speed_install(void)
+{
+    HMODULE k32 = GetModuleHandleA(OBF_KERNEL32);
+    if (!k32) return 151;
+    BYTE *tc  = follow_jmp((BYTE *)GetProcAddress(k32, OBF_GETTICKCOUNT));
+    BYTE *qpc = follow_jmp((BYTE *)GetProcAddress(k32, OBF_QUERYPERFORMANCECOUNTER));
+    if (!tc || !qpc) return 151;
+    MH_STATUS s = MH_Initialize();
+    if (s != MH_OK && s != MH_ERROR_ALREADY_INITIALIZED) return 150;
+    s = MH_CreateHook(tc, (void *)our_gettickcount, (void **)&g_realTC);
+    if (s != MH_OK && s != MH_ERROR_ALREADY_CREATED) return 150;
+    s = MH_CreateHook(qpc, (void *)our_qpc, (void **)&g_realQPC);
+    if (s != MH_OK && s != MH_ERROR_ALREADY_CREATED) return 150;
+    HMODULE wmm = GetModuleHandleA(OBF_WINMM);   /* 未加载不强载(dm 同款) */
+    if (wmm) {
+        BYTE *tgt = follow_jmp((BYTE *)GetProcAddress(wmm, OBF_TIMEGETTIME));
+        if (tgt) MH_CreateHook(tgt, (void *)our_timegettime, (void **)&g_realTGT);
+    }
+    speed_reset();                               /* 基线扎在 Enable 前 */
+    if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK) return 150;
+    g_spHooked = 1;
+    return 0;
+}
+
+/* 变速命令(dm 0x863 处理器 1:1): rate_x10 原式 /10.0 落全局, 无特判;
+ * 未装钩先装(幂等)。 */
+static int speed_cmd(int rate_x10)
+{
+    if (!g_spHooked) {
+        int rc = speed_install();
+        if (rc) return rc;
+    }
+    g_spRate = (double)rate_x10 / 10.0;
+    return 1;
+}
+
+
 /* ---- 模块隐藏(大漠 dx.public.hide.dll 简版): 从 PEB->Ldr 三条链摘掉本模块。
  * ---- 摘链后 EnumProcessModules/Toolhelp 快照/进程内 GetModuleHandle 都找不到。 ---- */
 static int hide_module(void)
 {
 #ifdef _WIN64
     BYTE *peb = (BYTE *)__readgsqword(0x60);
+    BYTE *ldr = *(BYTE **)(peb + 0x18);                /* PEB->Ldr: x64 0x18 / x86 0x0C */
 #else
     BYTE *peb = (BYTE *)__readfsdword(0x30);
+    BYTE *ldr = *(BYTE **)(peb + 0x0C);
 #endif
     if (!peb) return 50;
-    BYTE *ldr = *(BYTE **)(peb + 0x0C);                /* PEB->Ldr (x86/x64 同偏移) */
     if (!ldr) return 51;
     /* LDR_DATA_TABLE_ENTRY: InLoadOrder(0x00) InMemoryOrder(0x08) InInitOrder(0x10)
      * 三条 LIST_ENTRY 链头都在 Ldr 里(x86: +0x0C/+0x14/+0x1C; x64: +0x10/+0x20/+0x30),
@@ -1171,6 +1321,7 @@ static DWORD WINAPI worker(LPVOID unused)
             case CMD_PING:    r = 0x50494731u; break;
             case CMD_BYE:     unhook_gl(); unhook_d3d9(); unhook_mouse_pack();
                               fake_active(0);
+                              speed_reset();           /* 变速复位: rate 归 1.0+重扎基线, 钩常驻(dm 解绑同款) */
                               g_hdr->state = 0; r = 0;
                               quit = TRUE; break;
             case CMD_HOOK_GL: r = (DWORD)hook_gl(); break;
@@ -1185,6 +1336,8 @@ static DWORD WINAPI worker(LPVOID unused)
                               else { unhook_mouse_pack(); r = 0; }
                               break;
             case CMD_FAKE_ACTIVE: r = (DWORD)fake_active((int)g_hdr->arg0); break;
+            case CMD_SPEED:   r = (DWORD)speed_cmd((int)g_hdr->arg0);
+                              break;                   /* arg0 = 倍率×10(dm 0x863 口径) */
             case CMD_HIDE:    r = (DWORD)hide_module(); break;
             case CMD_BIND:    g_hwnd = (HWND)(DWORD_PTR)g_hdr->arg0;
                               g_buttons = 0;

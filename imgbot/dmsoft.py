@@ -185,8 +185,15 @@ class DmSoft:
         time.sleep(1.0)
         return self._dx.frame_info()[0] - s0
 
-    def HackSpeed(self, rate: float) -> int:
-        raise NotImplementedError("变速齿轮(阶段3b): IAT hook 时间函数, 未开工")
+    def HackSpeed(self, rate: int) -> int:
+        """变速齿轮(大漠 HackSpeed 1:1 口径, 2026-11-04 逆向复刻): inline 钩
+        GetTickCount/QueryPerformanceCounter/timeGetTime 三钟源本体, 增量缩放累加。
+        rate = 倍率×10(大漠口径: 15→1.5 倍, 10→常速, 0→冻结时钟)。
+        需先 BindWindow 任一 dx 通道(首次调用装钩扎基线, 等价 dm 带
+        dx.public.hack.speed 的绑定); 解绑自动复位常速(钩常驻, dm 同款)。"""
+        self._need_dx()
+        self._dx.hack_speed(rate)
+        return 1
 
     def SetAero(self, enable: int) -> int:
         raise NotImplementedError("SetAero 未实现")

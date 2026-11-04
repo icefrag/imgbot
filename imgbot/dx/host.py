@@ -19,10 +19,11 @@ import numpy as np
 from ..win32.window import WindowLostError
 from .proto import (CMD_BIND, CMD_BYE, CMD_FAKE_ACTIVE, CMD_HIDE, CMD_HOOK_D3D9,
                     CMD_HOOK_GL, CMD_KEY, CMD_KEYSTATE, CMD_MOUSE, CMD_MOUSE_LOCK,
-                    CMD_MOUSE_PACK, CMD_PING, CMD_RAWINFO, FRAME_OFF, FIELD_NAMES,
-                    HEADER_SIZE, KEY_CHAR, KEY_DOWN, KEY_UP, M_DBLCLK, M_LDOWN,
-                    M_LUP, M_MDOWN, M_MOVE, M_MUP, M_RDOWN, M_RUP, M_WHEEL_DOWN,
-                    M_WHEEL_UP, OFF, PROTO_VERSION, SHM_MAGIC, SHM_SIZE)
+                    CMD_MOUSE_PACK, CMD_PING, CMD_RAWINFO, CMD_SPEED, FRAME_OFF,
+                    FIELD_NAMES, HEADER_SIZE, KEY_CHAR, KEY_DOWN, KEY_UP, M_DBLCLK,
+                    M_LDOWN, M_LUP, M_MDOWN, M_MOVE, M_MUP, M_RDOWN, M_RUP,
+                    M_WHEEL_DOWN, M_WHEEL_UP, OFF, PROTO_VERSION, SHM_MAGIC,
+                    SHM_SIZE)
 # 常量再导出: dx.input / 脚本一直 `from .host import M_*` 拿, 导入面不变
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -51,6 +52,8 @@ HOOK_ERRORS = {
     139: "GetMessageW 无哨兵", 140: "蹦床失败", 141: "页保护失败",
     142: "GetMessageA 解析失败", 143: "GetMessageA 无哨兵", 144: "蹦床失败",
     145: "页保护失败",
+    150: "MinHook 落钩/使能失败(变速齿轮)",
+    151: "时间钟源解析失败(变速齿轮)",
 }
 
 k32.CreateFileMappingW.restype = ctypes.c_void_p
@@ -299,6 +302,19 @@ class DxHost:
         rc = self._cmd(CMD_HIDE)
         if rc != 1:
             raise RuntimeError(f"模块隐藏失败 rc={rc}(50-53=PEB/链异常, 54=已摘链但句柄仍可解析)")
+        return rc
+
+    def hack_speed(self, rate_x10: int) -> int:
+        """变速齿轮(大漠 HackSpeed 1:1 复刻, 2026-11-04 逆向): MinHook inline 钩
+        三钟源本体(GetTickCount/QueryPerformanceCounter/timeGetTime; winmm 未加载
+        则两源), 增量缩放累加 —— IAT 槽/GetProcAddress 动态解析/寄存器提升指针
+        全路径覆盖。rate_x10 = 倍率×10(大漠 0x863 口径: 30=3 倍, 10=常速, 0=冻结)。
+        首次调用装钩+扎基线(=dm 带 dx.public.hack.speed 的绑定); 换档不重扎
+        (增量累加天然连续); 解绑自动复位 rate=1.0+重扎基线(钩常驻, dm 同款)。
+        返回 1; 150=MinHook 落钩/使能失败, 151=钟源解析失败。"""
+        rc = self._cmd(CMD_SPEED, rate_x10 & 0xFFFFFFFF)
+        if rc != 1:
+            raise RuntimeError(f"变速齿轮失败 rc={rc}: {HOOK_ERRORS.get(rc, '未知')}")
         return rc
 
     @property

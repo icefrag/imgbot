@@ -220,6 +220,7 @@ RGBA(alpha=掩码), `find`/`find_all` 对键控模板只比对非底色笔画 �
 | MoveTo/LeftClick(后台) | `win32.input.MouseKeyboard`(贝塞尔拟人轨迹) |
 | SendString / SendPaste | `type_text`(WM_CHAR / ADBKeyboard) / `send_paste`; 老 ANSI 窗口打不进字换 `send_ime_string`(WM_IME_CHAR, 大漠 SendString 真身配方) |
 | BindWindow(display,mouse,keypad) | `Win32Target(hwnd, capture=…, input=…)` / `AdbTarget(serial)`; 大漠全词汇壳 **DmSoft.BindWindow**(gdi/dx/windows/normal/windows2, 详见 dmsoft.py 头注释) |
+| HackSpeed | **DmSoft.HackSpeed**(dx 通道: MinHook inline 钩三钟源本体, 大漠 1:1 复刻; rate=倍率×10, 10=常速, 0=冻结) |
 | FindWindow / EnumWindow | `win32.window.GameWindow.find`(类名/标题) / `enum_windows_dm`+`pids_of_process`(大漠 filter 位口径) |
 | SetWindowState | `win32.window.set_window_state`(大漠 0-14 口径: 激活/隐藏/置顶/禁用/强杀…) |
 | LockInput | **DmSoft.LockInput**(BlockInput, 锁定需管理员) |
