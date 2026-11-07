@@ -56,6 +56,12 @@ class AdbDevice:
         # 必须 exec-out: 走 shell 管道会把 PNG 里的 \n 损坏成 \r\n
         return self._run("exec-out", "screencap", "-p")
 
+    def screenshot_raw(self) -> bytes:
+        """原始帧截图(无 -p): w,h,format 头 + RGBA 像素, 模拟器免 PNG 编码、宿主免
+        imdecode(2026-11-07 客户机5开CPU案). exec-out 同为二进制安全. 头格式/色彩序
+        按设备而定, 解码用 vision.decode_framebuffer(不认就 ValueError, 调用方回落PNG)."""
+        return self._run("exec-out", "screencap")
+
     def save_screenshot(self, path: Path) -> tuple[int, int]:
         """截图存文件, 返回宽高."""
         png = self.screenshot()

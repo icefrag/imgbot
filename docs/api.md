@@ -27,6 +27,7 @@
 | `set_templates_dir(path)` | None | 入口设一次模板目录(默认 `./templates` 相对 CWD) |
 | `load(name) -> ndarray` | 模板图 | 按名加载并缓存; **四角≥3/4同色即自动键控成 RGBA** |
 | `decode_png(png_bytes) -> ndarray` | BGR | adb PNG bytes → 图像 |
+| `decode_framebuffer(raw_bytes) -> ndarray` | BGR | adb 原始帧(screencap 无 -p) → 图像; 头不可认抛 ValueError |
 | `key_out_background(name, tol=8) -> float` | 保留笔画占比 | 手动键控(旧流程兼容, 一般不用) |
 | `find(screen, tpl, threshold=0.85, region=None)` | `(x, y, score)` \| None | 单目标模板匹配; `region=(x1,y1,x2,y2)` 限矩形, 返回**全屏**坐标 |
 | `find_any(screen, names, threshold=0.85)` | `(x, y, score)` \| None | 多模板任一命中, 取最高分; 缺素材跳过 |
@@ -56,7 +57,7 @@
 | `find_lines(screen, region=None, fast=False)` | `[(x, y, text)]` | 全部文本行, 不筛选 |
 | `raw_texts(screen, region=None, fast=False)` | `[(text, conf)]` | 原始文本+置信度(自己解析数值) |
 | `best_match(candidates, keyword, min_ratio=0.7)` | `(x, y, ratio)` \| None | 纯逻辑, 可脱离 OCR 单测 |
-| `engine(fast=False)` | RapidOCR | 引擎单例; `fast=True` 只给"大字窄条"(小字会漏读) |
+| `engine(fast=False)` | RapidOCR | 引擎单例; `fast=True` 只给"大字窄条"(小字会漏读); 慢引擎进程级并发闸 `OCR_MAX_CONCURRENT=3`(2026-11-07 5开CPU案, 结果不变只延峰) |
 
 关键词规矩: ≥4 字、去标点; 比例匹配容忍个别错字(7 字错 1 字仍 0.83), 2 字短词上限 0.44 基本无效。
 
@@ -138,7 +139,7 @@ same_frame 窗口(防复读旧帧); 停止信号先于命中检查; wait_pic/wai
 
 | API | 说明 |
 |---|---|
-| `AdbDevice(serial, adb_path="adb")` | 设备命令全带 `-s <serial>`; `screenshot() -> bytes`(必须 exec-out)、`save_screenshot(path)`、`tap`、`swipe`、`keyevent`、`shell(*args)`、`install(apk)`、`start_app`、`stop_app` |
+| `AdbDevice(serial, adb_path="adb")` | 设备命令全带 `-s <serial>`; `screenshot() -> bytes`(必须 exec-out)、`screenshot_raw() -> bytes`(原始帧, 配 vision.decode_framebuffer)、`save_screenshot(path)`、`tap`、`swipe`、`keyevent`、`shell(*args)`、`install(apk)`、`start_app`、`stop_app` |
 | `list_devices(adb_path="adb") -> list[str]` | 在线设备序列号 |
 | `resolve_adb(adb_path="adb") -> str` | 裸名 "adb" 先找宿主 exe 旁随包 platform-tools, 找不到退 PATH; 显式路径直通 |
 | `adb(adb_path, *args) -> str` | 无 `-s` 的全局 adb 命令 |

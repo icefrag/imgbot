@@ -7,6 +7,7 @@ import ctypes
 import ctypes.wintypes as wt
 import random
 import re
+import struct
 import tempfile
 import threading
 import time
@@ -17,7 +18,7 @@ from unittest import mock
 import cv2
 import numpy as np
 
-from . import actions, adb as adb_mod
+from . import actions, adb as adb_mod, ocr as ocr_mod
 from . import ime, nav as nav_mod, vision
 from .ocr import best_match
 from .readout import enlarge, read_digits
@@ -199,6 +200,22 @@ def main():
     same = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
     assert not vision.changed(same, same.copy())
     assert vision.changed(same, rng.integers(0, 255, (540, 960, 3), dtype=np.uint8))
+
+    # ---- decode_framebuffer: screencap 原始帧(2026-11-07 CPU案) ----
+    fb = rng.integers(0, 255, (54, 96, 4), dtype=np.uint8)  # h=54, w=96
+    _hdr = struct.pack("<iii", 96, 54, 1)                   # RGBA_8888, 12字节头(Android 9-)
+    _got = vision.decode_framebuffer(_hdr + fb.tobytes())
+    assert _got.shape == (54, 96, 3) and (_got == cv2.cvtColor(fb, cv2.COLOR_RGBA2BGR)).all()
+    _got = vision.decode_framebuffer(_hdr + fb.tobytes() + b"\x00" * 4)  # 16字节头(11+ colorspace)
+    assert _got.shape == (54, 96, 3)
+    for _bad in (struct.pack("<iii", 96, 54, 7) + fb.tobytes(),    # fmt 非4字节/像素
+                 struct.pack("<iii", 96, 54, 1) + fb.tobytes()[:-1],  # 总长与 w*h*4 不符
+                 b"", b"garbage"):
+        try:
+            vision.decode_framebuffer(_bad)
+            raise AssertionError(f"坏帧头不该解码成功: {_bad[:16]!r}")
+        except ValueError:
+            pass
 
     # ---- wait_tap: 轮询出现即点(假帧序列注入; 命中/超时/停止三分支) ----
     class _FakeDev:  # AdbDevice 替身: screenshot() 吐 PNG bytes, 帧耗尽后停最后一帧
@@ -420,6 +437,33 @@ def main():
     assert best_match([(100, 200, "军团任务发布岗")], "军团任务发布员")[2] >= 0.7  # 错1字仍命中
     assert best_match([(100, 200, "军团服务商店")], "军团任务发布员") is None
     assert best_match([(100, 200, "发布员")], "军团任务发布员") is None  # 短词比例不够
+
+    # ---- 慢引擎并发闸(2026-11-07 客户机5开CPU案): engine() 返回代理, 进程级最多
+    # OCR_MAX_CONCURRENT 发同推; 预播种假引擎免加载真模型 ----
+    _lk, _cur, _max, _done = threading.Lock(), [0], [0], []
+
+    def _fake_raw(_img):
+        with _lk:
+            _cur[0] += 1
+            _max[0] = max(_max[0], _cur[0])
+        time.sleep(0.15)
+        with _lk:
+            _cur[0] -= 1
+        return "r"
+
+    _seed = ocr_mod._engines
+    ocr_mod._engines = {False: ocr_mod._Capped(_fake_raw)}
+    try:
+        _ths = [threading.Thread(target=lambda: _done.append(ocr_mod.engine(False)(None)))
+                for _ in range(6)]
+        for t in _ths:
+            t.start()
+        for t in _ths:
+            t.join(5)
+        assert _done == ["r"] * 6, _done                    # 6发全跑完
+        assert 1 <= _max[0] <= ocr_mod.OCR_MAX_CONCURRENT, _max  # 同时在推不超闸
+    finally:
+        ocr_mod._engines = _seed
 
     # ---- readout 逐字读数: 放大 + 分数优先 NMS + 按 x 排序 ----
     # (画布与模板各自放大后拼合 —— 整体放大和单独放大边缘插值不同, 会把分数压到阈值线)

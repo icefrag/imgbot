@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import struct
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -54,6 +55,27 @@ def decode_png(png: bytes) -> np.ndarray:
     if img is None:
         raise ValueError(f"截图解码失败 ({len(png)} bytes)")
     return img
+
+
+def decode_framebuffer(raw: bytes) -> np.ndarray:
+    """adb `screencap`(无 -p) 原始字节 -> BGR ndarray; 帧头不可认时抛 ValueError
+    (调用方回落 PNG 老路, 别猜).
+
+    帧头 = w,h,format 各 int32 LE; Android 9 及以下 12 字节, 11+ 追加 colorspace 段
+    变 16 字节 —— 两档自洽试解(总长必须恰好 w*h*4 才认). format 只接 4字节/像素
+    (RGBA/RGBX_8888). 比起 PNG 路省模拟器侧整帧编码+宿主 imdecode(2026-11-07
+    客户机5开CPU案); 旋转/过渡帧不由这里管 —— 调用方形状校验兜(与 PNG 路同口径)."""
+    for hdr in (12, 16):
+        if len(raw) <= hdr:
+            continue
+        w, h, fmt = struct.unpack_from("<iii", raw, 0)
+        if not (0 < w <= 8192 and 0 < h <= 8192) or fmt not in (1, 2):
+            continue
+        if len(raw) - hdr != w * h * 4:
+            continue
+        px = np.frombuffer(raw, dtype=np.uint8, offset=hdr).reshape(h, w, 4)
+        return cv2.cvtColor(px, cv2.COLOR_RGBA2BGR)  # RGBX 的 X 段 cvtColor 不看, 同路
+    raise ValueError(f"不可认的原始帧头 ({len(raw)} bytes)")
 
 
 def load(name: str) -> np.ndarray:

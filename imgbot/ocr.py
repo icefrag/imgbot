@@ -6,6 +6,7 @@ fast=True 走 max 快引擎: 只给"大字窄条"场景(板面标题行), 小字
 """
 from __future__ import annotations
 
+import threading
 from difflib import SequenceMatcher
 
 _engines: dict[bool, object] = {}
@@ -15,6 +16,25 @@ _engines: dict[bool, object] = {}
 # 3s墙钟烧23s CPU(7.7x放大), 多开worker各自OCR互相叠加直接把CPU打满(实测主控558%),
 # 而模拟器本体才各~1核. 封顶后放大倍数≈线程数.
 ORT_INTRA_THREADS = 2
+ORT_INTER_THREADS = 1    # 并行分层禁掉(默认随核): 多开下只有放大线程数的副作用没收益
+
+# 慢引擎进程级并发闸(2026-11-07 客户机5开CPU 50%案): 慢OCR单发1.4~1.9s墙钟×intra2线程,
+# 5 worker同相位无封顶=10线程冲顶. 同时最多 3 发在推(≈3核封顶), 排队方等前一发跑完——
+# 结果零变化只延峰. 快引擎不闸(窄条25ms小拍, 闸了反被慢调用堵住轮询节奏)
+OCR_MAX_CONCURRENT = 3
+_sem_slow = threading.Semaphore(OCR_MAX_CONCURRENT)
+
+
+class _Capped:
+    """慢引擎并发闸代理: engine() 返回值的调用方(含消费项目直调 engine()(img))无感."""
+    __slots__ = ("_raw",)
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    def __call__(self, img):
+        with _sem_slow:
+            return self._raw(img)
 
 
 def engine(fast: bool = False):
@@ -29,9 +49,11 @@ def engine(fast: bool = False):
         # 必须走**无前缀Global键**: 本版rapidocr的UpdateParameters有bug——带前缀的
         # det_/rec_线程键会被 Global(-1) 反向覆盖; 只有Global键经 update_global_to_module
         # 复制进三个模型段才生效(2026-10-28 实测 det_前缀传了等于没传)
-        caps = dict(intra_op_num_threads=ORT_INTRA_THREADS)
-        _engines[fast] = RapidOCR(det_limit_side_len=736, det_limit_type='max', **caps) if fast \
+        caps = dict(intra_op_num_threads=ORT_INTRA_THREADS,
+                    inter_op_num_threads=ORT_INTER_THREADS)
+        eng = RapidOCR(det_limit_side_len=736, det_limit_type='max', **caps) if fast \
             else RapidOCR(**caps)
+        _engines[fast] = eng if fast else _Capped(eng)  # 只有慢引擎过闸
     return _engines[fast]
 
 
