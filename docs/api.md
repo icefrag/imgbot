@@ -57,7 +57,7 @@
 | `find_lines(screen, region=None, fast=False)` | `[(x, y, text)]` | 全部文本行, 不筛选 |
 | `raw_texts(screen, region=None, fast=False)` | `[(text, conf)]` | 原始文本+置信度(自己解析数值) |
 | `best_match(candidates, keyword, min_ratio=0.7)` | `(x, y, ratio)` \| None | 纯逻辑, 可脱离 OCR 单测 |
-| `engine(fast=False)` | RapidOCR | 引擎单例; `fast=True` 只给"大字窄条"(小字会漏读); 慢引擎进程级并发闸 `OCR_MAX_CONCURRENT=3`(2026-11-07 5开CPU案, 结果不变只延峰) |
+| `engine(fast=False)` | RapidOCR(慢路为并发闸代理) | 引擎单例; `fast=True` 只给"大字窄条"(小字会漏读); 慢引擎进程级并发闸 `OCR_MAX_CONCURRENT=3`(2026-11-07 5开CPU案, 结果不变只延峰) |
 
 关键词规矩: ≥4 字、去标点; 比例匹配容忍个别错字(7 字错 1 字仍 0.83), 2 字短词上限 0.44 基本无效。
 
