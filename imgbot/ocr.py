@@ -6,10 +6,23 @@ fast=True 走 max 快引擎: 只给"大字窄条"场景(板面标题行), 小字
 """
 from __future__ import annotations
 
+import sys
 import threading
+import time
 from difflib import SequenceMatcher
+from pathlib import Path
 
 _engines: dict[bool, object] = {}
+
+# 引擎诊断日志落盘路径(消费项目 set_log_file() 注入; None=只打 stderr——打包 exe
+# 下 stderr 看不见, 等于没日志). 记每次调用起点/慢调用/重建事件: 2026-11-11 三台
+# 熔断案里 worker 静默卡死 55 分钟没有任何 breadcrumbs, 有了起点行才能定死
+# "哪个调用进去了没出来".
+_logf: Path | None = None
+_loglock = threading.Lock()
+
+# 超过这个秒数的调用落"慢调用"行(慢引擎常态 1.4~1.9s, 全屏 ~3s, 5s=必有异常)
+_SLOW_CALL_S = 5.0
 
 
 # onnxruntime 每模型推理线程数(2026-10-28): 默认-1=吃满全部核——16核机单次全屏OCR
@@ -37,6 +50,74 @@ class _Capped:
             return self._raw(img)
 
 
+def set_log_file(path) -> None:
+    """消费项目注入 OCR 引擎日志落盘路径(多线程 append, 内部加锁); None=退回只打 stderr."""
+    global _logf
+    _logf = Path(path) if path is not None else None
+
+
+def _olog(text: str) -> None:
+    """引擎诊断行: stderr(开发态) + 注入的日志文件(生产态), 双写."""
+    line = f"{time.strftime('%m-%d %H:%M:%S')} {text}"
+    print(line, file=sys.stderr, flush=True)
+    if _logf is not None:
+        with _loglock:
+            with open(_logf, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+
+def _build(fast: bool):
+    """真建一个 RapidOCR 引擎(重建自愈与首次建共用, 测试可 monkeypatch 此函数)."""
+    from rapidocr_onnxruntime import RapidOCR
+    # 必须走**无前缀Global键**: 本版rapidocr的UpdateParameters有bug——带前缀的
+    # det_/rec_线程键会被 Global(-1) 反向覆盖; 只有Global键经 update_global_to_module
+    # 复制进三个模型段才生效(2026-10-28 实测 det_前缀传了等于没传)
+    caps = dict(intra_op_num_threads=ORT_INTRA_THREADS,
+                inter_op_num_threads=ORT_INTER_THREADS)
+    return RapidOCR(det_limit_side_len=736, det_limit_type='max', **caps) if fast \
+        else RapidOCR(**caps)
+
+
+class _SelfHeal:
+    """bad allocation 自愈代理(2026-11-11 三台熔断案): 长跑进程里 ORT 对大输入
+    连续抛 `FAIL : bad allocation`(小图能过、大图挂, 机器 commit 未耗尽——
+    pagefile 峰值 848MB/无资源耗尽事件; 嫌疑=进程堆碎片化), worker 重启不重建
+    `_engines` 单例, 只有整个进程重启才治. 撞上就重建引擎重试一发, 不再烧熔断;
+    重建后仍坏照旧抛(不无限重试). 每次调用落起点行、>5s 落慢调用行、重建落
+    事件行(带 img.shape)——下次再犯, 三行定死是"碎片化"(重建即愈)还是
+    "个别输入异常"(特定尺寸必挂), 卡死案也能看出哪个调用进去了没出来."""
+
+    __slots__ = ("_fast",)
+
+    def __init__(self, fast: bool):
+        self._fast = fast
+
+    def __call__(self, img):
+        shape = getattr(img, "shape", None)
+        _olog(f"[ocr] start fast={self._fast} shape={shape}")
+        t0 = time.monotonic()
+        for attempt in (0, 1):
+            raw = _engines[self._fast]
+            try:
+                if self._fast:
+                    out = raw(img)
+                else:
+                    with _sem_slow:             # 慢引擎并发闸(只闸真推理)
+                        out = raw(img)
+                dt = time.monotonic() - t0
+                if dt > _SLOW_CALL_S:
+                    _olog(f"[ocr] 慢调用 {dt:.1f}s fast={self._fast} shape={shape}")
+                return out
+            except Exception as e:
+                if attempt == 0 and "bad allocation" in str(e):
+                    _olog(f"[ocr] 引擎 bad allocation, 重建重试(fast={self._fast}, "
+                          f"img.shape={shape}): {e}")
+                    _engines[self._fast] = _build(self._fast)
+                    continue
+                _olog(f"[ocr] 引擎异常不重建(fast={self._fast}, shape={shape}): {e!r}")
+                raise
+
+
 def engine(fast: bool = False):
     """取 OCR 单例引擎(消费项目的等级读取等可直接用, 免各自建单例).
 
@@ -45,16 +126,8 @@ def engine(fast: bool = False):
     所以全局默认引擎保持 min 不动(宁可慢不可漏), 双引擎并存.
     """
     if fast not in _engines:
-        from rapidocr_onnxruntime import RapidOCR
-        # 必须走**无前缀Global键**: 本版rapidocr的UpdateParameters有bug——带前缀的
-        # det_/rec_线程键会被 Global(-1) 反向覆盖; 只有Global键经 update_global_to_module
-        # 复制进三个模型段才生效(2026-10-28 实测 det_前缀传了等于没传)
-        caps = dict(intra_op_num_threads=ORT_INTRA_THREADS,
-                    inter_op_num_threads=ORT_INTER_THREADS)
-        eng = RapidOCR(det_limit_side_len=736, det_limit_type='max', **caps) if fast \
-            else RapidOCR(**caps)
-        _engines[fast] = eng if fast else _Capped(eng)  # 只有慢引擎过闸
-    return _engines[fast]
+        _engines[fast] = _build(fast)
+    return _SelfHeal(fast)
 
 
 def _crop(screen_bgr, region):
