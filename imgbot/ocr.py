@@ -62,13 +62,15 @@ def set_log_file(path) -> None:
 
 
 def _olog(text: str) -> None:
-    """引擎诊断行: stderr(开发态) + 注入的日志文件(生产态), 双写."""
+    """引擎诊断行: 注入了日志文件就只写文件(消费项目进程形态下 stderr 并进
+    stdout 行协议会漏进用户中控台, 2026-11-12 用户反馈); 没注入才退 stderr(开发态)."""
     line = f"{time.strftime('%m-%d %H:%M:%S')} {text}"
-    print(line, file=sys.stderr, flush=True)
-    if _logf is not None:
-        with _loglock:
-            with open(_logf, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+    if _logf is None:
+        print(line, file=sys.stderr, flush=True)
+        return
+    with _loglock:
+        with open(_logf, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
 
 def _build(fast: bool):
