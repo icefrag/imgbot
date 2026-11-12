@@ -57,7 +57,8 @@
 | `find_lines(screen, region=None, fast=False)` | `[(x, y, text)]` | 全部文本行, 不筛选 |
 | `raw_texts(screen, region=None, fast=False)` | `[(text, conf)]` | 原始文本+置信度(自己解析数值) |
 | `best_match(candidates, keyword, min_ratio=0.7)` | `(x, y, ratio)` \| None | 纯逻辑, 可脱离 OCR 单测 |
-| `engine(fast=False)` | RapidOCR(慢路为并发闸代理) | 引擎单例; `fast=True` 只给"大字窄条"(小字会漏读); 慢引擎进程级并发闸 `OCR_MAX_CONCURRENT=3`(2026-11-07 5开CPU案, 结果不变只延峰) |
+| `set_log_file(path)` | None | 引擎诊断日志落盘注入([ocr]start/慢调用/重建行; None=只打stderr); 消费项目 attach 时注入(2026-11-11 三台熔断案) |
+| `engine(fast=False)` | RapidOCR(慢路为并发闸代理) | 引擎单例; `fast=True` 只给"大字窄条"(小字会漏读); 慢引擎进程级并发闸 `OCR_MAX_CONCURRENT=3`(2026-11-07 5开CPU案, 结果不变只延峰); env 旋钮 `IMGBOT_OCR_MAX_CONCURRENT`/`IMGBOT_ORT_INTRA_THREADS`(2026-11-12 ADR-0004: 进程形态下 icefrag 子进程默认注入 1) |
 
 关键词规矩: ≥4 字、去标点; 比例匹配容忍个别错字(7 字错 1 字仍 0.83), 2 字短词上限 0.44 基本无效。
 

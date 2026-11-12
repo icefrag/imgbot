@@ -6,6 +6,7 @@ fast=True 走 max 快引擎: 只给"大字窄条"场景(板面标题行), 小字
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -28,13 +29,17 @@ _SLOW_CALL_S = 5.0
 # onnxruntime 每模型推理线程数(2026-10-28): 默认-1=吃满全部核——16核机单次全屏OCR
 # 3s墙钟烧23s CPU(7.7x放大), 多开worker各自OCR互相叠加直接把CPU打满(实测主控558%),
 # 而模拟器本体才各~1核. 封顶后放大倍数≈线程数.
-ORT_INTRA_THREADS = 2
+# env 旋钮(2026-11-12, ADR-0004): 进程形态下按机况兜底调小, 如 IMGBOT_ORT_INTRA_THREADS=1
+ORT_INTRA_THREADS = int(os.environ.get("IMGBOT_ORT_INTRA_THREADS", "2"))
 ORT_INTER_THREADS = 1    # 并行分层禁掉(默认随核): 多开下只有放大线程数的副作用没收益
 
 # 慢引擎进程级并发闸(2026-11-07 客户机5开CPU 50%案): 慢OCR单发1.4~1.9s墙钟×intra2线程,
 # 5 worker同相位无封顶=10线程冲顶. 同时最多 3 发在推(≈3核封顶), 排队方等前一发跑完——
 # 结果零变化只延峰. 快引擎不闸(窄条25ms小拍, 闸了反被慢调用堵住轮询节奏)
-OCR_MAX_CONCURRENT = 3
+# env 旋钮(2026-11-12, ADR-0004): 每设备一进程形态下 icefrag 子进程注入默认 1
+# (4台峰值=慢OCR 4线程级, 不再是 3发×N进程 无界叠加); 线程形态(单进程多worker)不注入,
+# 维持 3. 机况紧张也可手动 IMGBOT_OCR_MAX_CONCURRENT=1.
+OCR_MAX_CONCURRENT = int(os.environ.get("IMGBOT_OCR_MAX_CONCURRENT", "3"))
 _sem_slow = threading.Semaphore(OCR_MAX_CONCURRENT)
 
 
