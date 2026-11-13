@@ -11,6 +11,7 @@ from __future__ import annotations
 import ctypes
 import struct
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -91,9 +92,19 @@ class DxHost:
         self.pid = pid
         self._map = None
         self._view = None
+        bits = target_bitness(pid)
         bin_dir = Path(__file__).parent / "bin"
-        self._dll = (bin_dir / f"dmcore{target_bitness(pid)}.dll").resolve()
-        self._injector = bin_dir / f"injector{target_bitness(pid)}.exe"
+        if getattr(sys, "frozen", False):
+            # 冻结 exe(PyInstaller onefile): 数据随包解压到 %TEMP%\_MEIxxx,
+            # 杀软常把其中的注入件隔离掉(且按文件逐个吃 —— 同目录可能只剩
+            # 一半)。bin\ 放到 exe 旁(打包脚本生成)且该位宽两件齐全才选用,
+            # 缺件回落包内侧 —— 配合工具启动自愈(exe 侧缺件自动从包内补)。
+            exe_bin = Path(sys.executable).parent / "bin"
+            if all((exe_bin / f).exists()
+                   for f in (f"dmcore{bits}.dll", f"injector{bits}.exe")):
+                bin_dir = exe_bin
+        self._dll = (bin_dir / f"dmcore{bits}.dll").resolve()
+        self._injector = bin_dir / f"injector{bits}.exe"
         if not self._dll.exists() or not self._injector.exists():
             raise FileNotFoundError(
                 f"注入件未构建: {bin_dir} (先跑 uv run dx/native/build.py)")
@@ -163,12 +174,12 @@ class DxHost:
                 return
             # 旧 worker 活着才会应答; 死实例的残留 mapping 由引用计数自然消亡
             base = (ctypes.c_char * HEADER_SIZE).from_address(view)
-            cur = _hdr_at(view)
+            cur = self._hdr_at(view)
             struct.pack_into("<4I", base, OFF["cmd"], CMD_BYE,
                              cur["cmd_seq"] + 1, cur["ack_seq"], cur["ack_result"])
             deadline = time.monotonic() + 1.0
             while time.monotonic() < deadline:
-                if _hdr_at(view)["ack_seq"] == cur["cmd_seq"] + 1:
+                if self._hdr_at(view)["ack_seq"] == cur["cmd_seq"] + 1:
                     time.sleep(0.15)          # 等它退线程/放互斥体
                     return
                 time.sleep(0.02)
