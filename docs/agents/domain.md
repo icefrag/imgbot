@@ -29,7 +29,7 @@ When your output names a domain concept (in an issue title, a refactor proposal,
 要点提醒(详见 GLOSSARY.md):
 - 自研后台插件叫**潜影(qianying)**, 禁止用"大漠"指代本库组件("大漠"仅指反编译参考的原版商业插件)
 - 通道序一律 BGR; 坐标=绑定窗口客户区
-- Target 是操作对象(分 AdbTarget/Win32Target), "绑定"是一次建立持续操作关系的行为
+- Target 是操作对象(adb 侧 AdbTarget / PC 窗口侧 DmSoft.BindWindow), "绑定"是一次建立持续操作关系的行为
 
 If the concept you need isn't in the glossary yet, that's a signal: either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
 

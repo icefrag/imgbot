@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 class FrameSource(Protocol):
     """Ops 的帧源 seam: 门面只依赖这四件事, 其余(通道/绑定/注入)全在 seam 之后。
 
-    DmSoft 结构化满足(BindWindow 选什么通道都不影响本协议);
+    DmSoft/AdbTarget 结构化满足(BindWindow 选什么通道都不影响本协议);
     离线测试用假 adapter(见 selfcheck 的 _FakeDm)。"""
 
     def screen(self) -> np.ndarray: ...

@@ -10,15 +10,17 @@
 
 | API | 说明 |
 |---|---|
-| `AdbTarget(serial, adb_path="adb")` | 安卓模拟器/真机后端 |
-| `Win32Target(hwnd_or_window, capture="printwindow", input="postmessage")` | PC 窗口后端(通道参数留位) |
+| `AdbTarget(serial, adb_path="adb")` | 安卓模拟器/真机后端(adb 截图+输入, 天然后台) |
 | `Target` | 最小公共接口基类: `screenshot() -> BGR ndarray` / `tap(x, y)` |
 
 - `AdbTarget` 另有: `serial`(属性)、`save_screenshot(path)`、`swipe(...)`、`keyevent(code)`、
   `shell(*args)`、`type_text(text)`、`start_app(pkg, act)`、`stop_app(pkg)`。
-- `Win32Target` 另有: `double_click(x, y)`、`hover(x, y, duration=1.5)`、`type_text(text)`、
-  `paste(text)`、`swipe(...)`(未实现, 会抛)、`keyevent(code)`(windows 通道 = 带扫描码
-  消息键, 只达从消息循环读键的目标; 轮询型游戏免疫 → 用 `input="dx"`)。
+- PC 窗口不设 Target 门面: 统一走 **DmSoft.BindWindow**(大漠全模式字符串
+  normal/gdi/dx × windows/windows2/dx/normal, 键鼠/键面见 dmsoft 的 `keymouse`
+  属性与 `KeyPress` 族)。
+- adb 帧源 adapter: `AdbTarget` 结构化满足 `ops.FrameSource`(`screen`/`keymouse`/
+  `GetBindWindow`/`GetClientSize`), 可直接 `Ops(AdbTarget(serial))`; `keymouse` 的
+  `click/settle`/`double_click`/`drag(steps, interval)` 走 actions 拟人层。
 
 ## `imgbot/vision.py` —— 图色层(吃 BGR ndarray, 与后端无关)
 
@@ -221,7 +223,7 @@ RGBA(alpha=掩码), `find`/`find_all` 对键控模板只比对非底色笔画 �
 | FindStr | `ocr.find_text` / `find_texts`(字库被 RapidOCR 替代) |
 | MoveTo/LeftClick(后台) | `win32.input.MouseKeyboard`(贝塞尔拟人轨迹) |
 | SendString / SendPaste | `type_text`(WM_CHAR / ADBKeyboard) / `send_paste`; 老 ANSI 窗口打不进字换 `send_ime_string`(WM_IME_CHAR, 大漠 SendString 真身配方) |
-| BindWindow(display,mouse,keypad) | `Win32Target(hwnd, capture=…, input=…)` / `AdbTarget(serial)`; 大漠全词汇壳 **DmSoft.BindWindow**(gdi/dx/windows/normal/windows2, 详见 dmsoft.py 头注释) |
+| BindWindow(display,mouse,keypad) | `AdbTarget(serial)`(adb 侧); PC 窗口全词汇 **DmSoft.BindWindow**(gdi/dx/windows/normal/windows2, 详见 dmsoft.py 头注释) |
 | HackSpeed | **DmSoft.HackSpeed**(dx 通道: MinHook inline 钩三钟源本体, 大漠 1:1 复刻; rate=倍率×10, 10=常速, 0=冻结) |
 | FindWindow / EnumWindow | `win32.window.GameWindow.find`(类名/标题) / `enum_windows_dm`+`pids_of_process`(大漠 filter 位口径) |
 | SetWindowState | `win32.window.set_window_state`(大漠 0-14 口径: 激活/隐藏/置顶/禁用/强杀…) |

@@ -15,7 +15,8 @@
   别在中间插 RGB 转换(历史上 RGB/BGR 混用是两套实现合并时最直接的坑)。
 - **模板目录由消费项目注入**: 入口处 `vision.set_templates_dir(路径)` 设一次,
   默认 `./templates`(相对 CWD)。库自己不带模板。
-- **Target 双后端**(大漠 BindWindow 思想): `AdbTarget(serial)` / `Win32Target(hwnd)`,
+- **Target 双后端**(大漠 BindWindow 思想): adb 侧 `AdbTarget(serial)`, PC 窗口侧
+  `DmSoft.BindWindow(hwnd, display, mouse, keypad, 0)`(大漠全词汇壳),
   绑定一次, 截图/输入全打它; 通道参数留位, 加新通道不改调用方。
 - **拟人两层**: adb 侧 `actions.tap`(±3px 偏移+随机延迟); win32 侧 `MouseKeyboard`
   (贝塞尔轨迹+ease-out)。业务点击一律走拟人层, 裸 tap 留给校准/测试。

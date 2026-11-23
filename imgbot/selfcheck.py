@@ -1,13 +1,25 @@
-"""库级自检(无真机/无目标窗口): uv run python -m imgbot.selfcheck
+"""库级自检(无真机/无目标窗口): uv run python -m imgbot.selfcheck [层名[,层名...]]
 
-覆盖: adb 解析 / vision 全套(模板/键控/多点找色/区域找色族/卡死判定) /
-ocr 纯逻辑 / readout 逐字读数 / win32 后台键鼠+截图(离线窗口).
+按层选择回归(AGENTS 口径"改哪层跑哪层"; 不带参数仍全量):
+  adb           adb.py(设备解析/resolve_adb) + ime 资产
+  vision        vision.py(模板/键控/多点找色/区域找色族/卡死判定/raw 帧)
+  actions       actions.py(等待点击族 wait_tap/wait_tap_any)
+  ocr           ocr.py+readout.py(纯逻辑/并发闸/逐字读数)
+  ops           ops.py(帧源 seam 全策略)
+  nav           nav.py(界面导航图)
+  win32_input   win32/input.py(拟人轨迹/消息序列/剪贴板/LockInput)
+  win32_capture win32/capture.py(PrintWindow/屏幕截取)
+  win32_window  win32/window.py(窗口族/停靠/枚举/DACL)
+  docs          文档 lint(api.md 引用真实存在 + 注释无吞码)
+"win32" = win32_input,win32_window,win32_capture 合选。
+dmcore/host 协议改动例外: selfcheck 全量 + dx 双烟测(两端强耦合)。
 """
 import ctypes
 import ctypes.wintypes as wt
 import random
 import re
 import struct
+import sys
 import tempfile
 import threading
 import time
@@ -19,14 +31,19 @@ import cv2
 import numpy as np
 
 from . import actions, adb as adb_mod, ocr as ocr_mod
-from . import ime, nav as nav_mod, vision
+from . import ime, nav as nav_mod, ops as ops_mod, vision
+from .dmsoft import DmSoft
 from .ocr import best_match
+from .ops import FrameSource, Ops
 from .readout import enlarge, read_digits
+from .target import AdbTarget
 from .win32.capture import capture_client, capture_screen, virtual_screen_rect
 from .win32.input import (CF_UNICODETEXT, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
                           WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PASTE,
                           MouseKeyboard, human_path, send_ime_string, send_paste)
-from .win32.window import GameWindow, list_windows, xor_frame
+from .win32.window import (GameWindow, enum_windows_dm, list_windows,
+                           pids_of_process, set_window_state,
+                           unlock_process_dacl, xor_frame)
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
 _gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -134,7 +151,17 @@ def fake_png(width: int, height: int) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + width.to_bytes(4, "big") + height.to_bytes(4, "big")
 
 
-def main():
+def _vision_fixtures():
+    """确定性噪声帧 + 从中裁出的模板(各层独立重建, 单层可重跑)。"""
+    rng = np.random.default_rng(7)
+    screen = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
+    patch = screen[100:140, 300:420].copy()
+    return rng, screen, cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+
+
+def check_adb():
+    """adb 层: png_size/parse_devices/resolve_adb + ime 资产 + 帧源 adapter
+    (AdbTarget 四件齐, Ops 直喂)。"""
     # ---- adb 解析 ----
     assert adb_mod.png_size(fake_png(960, 540)) == (960, 540)
     assert adb_mod.parse_devices(
@@ -164,11 +191,46 @@ def main():
         (_ad / "adb.exe").write_bytes(b"")
         assert adb_mod.resolve_adb("adb") == str(_ad / "adb.exe")
 
+    # ---- ime 资产在位 ----
+    assert ime.ASSET_APK.exists(), "ADBKeyboard.apk 应随库打包在 imgbot/assets/"
+
+    # ---- 帧源 adapter: AdbTarget 四件齐, 直接 Ops(AdbTarget(...)) ----
+    class _FakeAdcDev:
+        """AdbDevice 替身: 固定帧 PNG + 点击/滑动记账(免真机)。"""
+        def __init__(self, frame):
+            self._frame = frame
+            self.taps, self.swipes = [], []
+
+        def screenshot(self) -> bytes:
+            return cv2.imencode(".png", self._frame)[1].tobytes()
+
+        def tap(self, x, y):
+            self.taps.append((x, y))
+
+        def swipe(self, x1, y1, x2, y2, ms=300):
+            self.swipes.append((x1, y1, x2, y2, ms))
+
+    _rng, _ascr, _atpl = _vision_fixtures()
+    t = AdbTarget("emulator-5554")           # 构造不连设备(adb.py 只存 serial)
+    t.device = _FakeAdcDev(_ascr)
+    assert isinstance(t, FrameSource), "AdbTarget 应结构化满足帧源协议"
+    assert Ops(t).find_tap(_atpl, timeout=2, interval=0.05) is True
+    assert len(t.device.taps) == 1, t.device.taps
+    assert abs(t.device.taps[0][0] - 360) <= 3 and abs(t.device.taps[0][1] - 120) <= 3, \
+        t.device.taps                        # 拟人 ±3px 抖动落在模板中心附近
+    assert t.GetClientSize(0) == (960, 540), "GetClientSize 应从帧取设备分辨率"
+    t.keymouse.drag(100, 200, 300, 400, steps=12, interval=0.03)
+    assert len(t.device.swipes) == 1, t.device.swipes
+    s = t.device.swipes[0]
+    # 拟人 ±3px: 两端各自抖动; 时长=steps*interval 拍(ms=360), 下限 150ms 防瞬移
+    assert all(abs(a - b) <= 3 for a, b in zip(s[:4], (100, 200, 300, 400))), s
+    assert s[4] >= 150, s
+
+
+def check_vision():
+    """图色层: 模板/region/多点找色/区域找色族/卡死判定/raw 帧/模板目录注入+色键。"""
     # ---- 模板匹配 ----
-    rng = np.random.default_rng(7)
-    screen = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
-    patch = screen[100:140, 300:420].copy()
-    tpl = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    rng, screen, tpl = _vision_fixtures()
     hit = vision.find(screen, tpl)
     assert hit and abs(hit[0] - 360) <= 1 and abs(hit[1] - 120) <= 1 and hit[2] > 0.99, hit
     assert vision.find(np.zeros((540, 960, 3), np.uint8), tpl, 0.99) is None  # NaN/不相似 → 未命中
@@ -216,108 +278,6 @@ def main():
             raise AssertionError(f"坏帧头不该解码成功: {_bad[:16]!r}")
         except ValueError:
             pass
-
-    # ---- wait_tap: 轮询出现即点(假帧序列注入; 命中/超时/停止三分支) ----
-    class _FakeDev:  # AdbDevice 替身: screenshot() 吐 PNG bytes, 帧耗尽后停最后一帧
-        def __init__(self, frames: list[np.ndarray]):
-            self.frames, self.i = frames, 0
-
-        def screenshot(self) -> bytes:
-            img = self.frames[min(self.i, len(self.frames) - 1)]
-            self.i += 1
-            return cv2.imencode(".png", img)[1].tobytes()
-
-    miss_frame = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
-    taps, logs = [], []
-    with mock.patch.object(actions, "tap", lambda dev, x, y, **_: taps.append((x, y))), \
-         mock.patch.object(vision, "load", lambda n: tpl):  # 劫持 tap/load, 不落盘
-        hit3 = actions.wait_tap(_FakeDev([miss_frame, miss_frame, screen]), tpl,
-                                timeout=5, interval=0.02, log=logs.append)
-        assert hit3 and abs(hit3[0] - 360) <= 1 and abs(hit3[1] - 120) <= 1, hit3
-        assert taps == [hit3[:2]] and logs and "score=" in logs[0], (taps, logs)
-        assert actions.wait_tap(_FakeDev([miss_frame]), tpl,
-                                timeout=0.25, interval=0.05) is None  # 不出现 → None
-        assert len(taps) == 1 and len(logs) == 1                        # 超时不点击不多话
-        ev = threading.Event()
-        ev.set()
-        t_stop = time.monotonic()
-        assert actions.wait_tap(_FakeDev([miss_frame]), tpl, timeout=5,
-                                interval=0.05, stop_event=ev) is None
-        assert time.monotonic() - t_stop < 2, "stop_event 置位应立即返回, 不等满 timeout"
-        # 停止优先: 已叫停且模板就在屏上 —— 不得命中更不得点击(停止≠命中)
-        assert actions.wait_tap(_FakeDev([screen]), tpl, timeout=5,
-                                interval=0.05, stop_event=ev) is None
-        assert len(taps) == 1, f"停止后不应再点击, 实际点了 {len(taps)} 次"
-        assert actions.wait_tap(_FakeDev([screen]), "btn.png",  # 模板文件名入参
-                                timeout=2, interval=0.02)
-
-    # 停止优先是 wait_find 的语义(不止 wait_tap): 已叫停时即使模板在屏上也不该返回命中
-    ev2 = threading.Event()
-    ev2.set()
-    assert vision.wait_find(lambda: screen.copy(), tpl, timeout=5, interval=0.05,
-                            stop_event=ev2) is None
-    assert vision.wait_find(lambda: screen.copy(), tpl, timeout=5,
-                            interval=0.05) is not None  # 无 stop_event 时正常命中
-
-    # ---- wait_tap_any: 表驱动"谁出现点谁"(命中即点/固定点/until集齐/超时/stop) ----
-    # 两个模板用**不同形状的确定图案**(纯随机纹理会互相关误命中: 同分布噪声块之间
-    # 相关系数也能很高), 贴到干净底上; 底色远离图案色, 保证互不误命中
-    pat_a = np.zeros((40, 120, 3), np.uint8)
-    pat_a[:, ::2] = (250, 250, 250)          # 竖条纹
-    pat_b = np.zeros((40, 120, 3), np.uint8)
-    pat_b[::2, :] = (250, 250, 250)          # 横条纹
-    tpl_a = cv2.cvtColor(pat_a, cv2.COLOR_BGR2GRAY)
-    tpl_b = cv2.cvtColor(pat_b, cv2.COLOR_BGR2GRAY)
-    clean = np.full((540, 960, 3), 40, np.uint8)
-    frame_a = clean.copy()
-    frame_a[100:140, 300:420] = pat_a
-    frame_b = clean.copy()
-    frame_b[300:340, 600:720] = pat_b
-    taps2, logs2 = [], []
-    tbl = {"a.png": tpl_a, "b.png": tpl_b}
-
-    def _fake_load(n):
-        if n not in tbl:
-            raise FileNotFoundError(n)   # 与 vision.load 真实行为一致
-        return tbl[n]
-
-    with mock.patch.object(actions, "tap", lambda dev, x, y, **_: taps2.append((x, y))), \
-         mock.patch.object(vision, "load", _fake_load):
-        tgts = [actions.TapTarget("a.png"), actions.TapTarget("b.png", point=(111, 222))]
-        # 谁出现点谁: 帧里只有 a → 点 a 的命中中心
-        got = actions.wait_tap_any(_FakeDev([frame_a]), tgts, timeout=1, interval=0.02,
-                                   log=logs2.append)
-        assert got == {"a.png"}, got
-        assert taps2 == [(360, 120)], taps2
-        # b 的固定点击点: 命中处不是点击点
-        taps2.clear()
-        got = actions.wait_tap_any(_FakeDev([clean, frame_b]), tgts, timeout=2,
-                                   interval=0.02, log=logs2.append)
-        assert got == {"b.png"}, got
-        assert taps2 == [(111, 222)], taps2
-        # until 集齐即止: 两个都点到才收口, 不等满 timeout
-        taps2.clear()
-        t0 = time.monotonic()
-        got = actions.wait_tap_any(_FakeDev([frame_a, frame_b]), tgts, timeout=30,
-                                   interval=0.02, until={"a.png", "b.png"})
-        assert got == {"a.png", "b.png"}, got
-        assert time.monotonic() - t0 < 5, "until 集齐应提前收口, 不等满 timeout"
-        # 超时: 一个都没出现 → 空集合
-        taps2.clear()
-        got = actions.wait_tap_any(_FakeDev([clean]), tgts, timeout=0.25, interval=0.05)
-        assert got == set() and taps2 == [], (got, taps2)
-        # stop_event: 置位立即停, 不再点
-        taps2.clear()
-        ev3 = threading.Event()
-        ev3.set()
-        got = actions.wait_tap_any(_FakeDev([frame_a]), tgts, timeout=30, interval=0.05,
-                                   stop_event=ev3)
-        assert got == set() and taps2 == [], (got, taps2)
-        # 缺模板的项跳过, 不让整表崩(素材渐进添加)
-        got = actions.wait_tap_any(_FakeDev([frame_a]),
-                                   [actions.TapTarget("missing.png"), actions.TapTarget("a.png")],
-                                   timeout=1, interval=0.02)
-        assert got == {"a.png"}, got
 
     # region 限定: 只在矩形内搜, 返回全屏坐标
     hit_r = vision.find(screen, tpl, region=(300, 100, 420, 140))
@@ -432,6 +392,116 @@ def main():
             vision.set_templates_dir(_orig_dir)
             vision._tpl_cache.clear()   # 临时目录的模板别留在缓存里
 
+    # ---- wait_find 停止优先(vision 级语义): 已叫停时即使模板在屏上也不该返回命中 ----
+    ev2 = threading.Event()
+    ev2.set()
+    assert vision.wait_find(lambda: screen.copy(), tpl, timeout=5, interval=0.05,
+                            stop_event=ev2) is None
+    assert vision.wait_find(lambda: screen.copy(), tpl, timeout=5,
+                            interval=0.05) is not None  # 无 stop_event 时正常命中
+
+
+def check_actions():
+    """拟人点击等待族: wait_tap/wait_tap_any(假帧序列注入, 停止优先)。"""
+    class _FakeDev:  # AdbDevice 替身: screenshot() 吐 PNG bytes, 帧耗尽后停最后一帧
+        def __init__(self, frames: list[np.ndarray]):
+            self.frames, self.i = frames, 0
+
+        def screenshot(self) -> bytes:
+            img = self.frames[min(self.i, len(self.frames) - 1)]
+            self.i += 1
+            return cv2.imencode(".png", img)[1].tobytes()
+
+    rng, screen, tpl = _vision_fixtures()
+
+    # ---- wait_tap: 轮询出现即点(假帧序列注入; 命中/超时/停止三分支) ----
+    miss_frame = rng.integers(0, 255, (540, 960, 3), dtype=np.uint8)
+    taps, logs = [], []
+    with mock.patch.object(actions, "tap", lambda dev, x, y, **_: taps.append((x, y))), \
+         mock.patch.object(vision, "load", lambda n: tpl):  # 劫持 tap/load, 不落盘
+        hit3 = actions.wait_tap(_FakeDev([miss_frame, miss_frame, screen]), tpl,
+                                timeout=5, interval=0.02, log=logs.append)
+        assert hit3 and abs(hit3[0] - 360) <= 1 and abs(hit3[1] - 120) <= 1, hit3
+        assert taps == [hit3[:2]] and logs and "score=" in logs[0], (taps, logs)
+        assert actions.wait_tap(_FakeDev([miss_frame]), tpl,
+                                timeout=0.25, interval=0.05) is None  # 不出现 → None
+        assert len(taps) == 1 and len(logs) == 1                        # 超时不点击不多话
+        ev = threading.Event()
+        ev.set()
+        t_stop = time.monotonic()
+        assert actions.wait_tap(_FakeDev([miss_frame]), tpl, timeout=5,
+                                interval=0.05, stop_event=ev) is None
+        assert time.monotonic() - t_stop < 2, "stop_event 置位应立即返回, 不等满 timeout"
+        # 停止优先: 已叫停且模板就在屏上 —— 不得命中更不得点击(停止≠命中)
+        assert actions.wait_tap(_FakeDev([screen]), tpl, timeout=5,
+                                interval=0.05, stop_event=ev) is None
+        assert len(taps) == 1, f"停止后不应再点击, 实际点了 {len(taps)} 次"
+        assert actions.wait_tap(_FakeDev([screen]), "btn.png",  # 模板文件名入参
+                                timeout=2, interval=0.02)
+
+    # ---- wait_tap_any: 表驱动"谁出现点谁"(命中即点/固定点/until集齐/超时/stop) ----
+    # 两个模板用**不同形状的确定图案**(纯随机纹理会互相关误命中: 同分布噪声块之间
+    # 相关系数也能很高), 贴到干净底上; 底色远离图案色, 保证互不误命中
+    pat_a = np.zeros((40, 120, 3), np.uint8)
+    pat_a[:, ::2] = (250, 250, 250)          # 竖条纹
+    pat_b = np.zeros((40, 120, 3), np.uint8)
+    pat_b[::2, :] = (250, 250, 250)          # 横条纹
+    tpl_a = cv2.cvtColor(pat_a, cv2.COLOR_BGR2GRAY)
+    tpl_b = cv2.cvtColor(pat_b, cv2.COLOR_BGR2GRAY)
+    clean = np.full((540, 960, 3), 40, np.uint8)
+    frame_a = clean.copy()
+    frame_a[100:140, 300:420] = pat_a
+    frame_b = clean.copy()
+    frame_b[300:340, 600:720] = pat_b
+    taps2, logs2 = [], []
+    tbl = {"a.png": tpl_a, "b.png": tpl_b}
+
+    def _fake_load(n):
+        if n not in tbl:
+            raise FileNotFoundError(n)   # 与 vision.load 真实行为一致
+        return tbl[n]
+
+    with mock.patch.object(actions, "tap", lambda dev, x, y, **_: taps2.append((x, y))), \
+         mock.patch.object(vision, "load", _fake_load):
+        tgts = [actions.TapTarget("a.png"), actions.TapTarget("b.png", point=(111, 222))]
+        # 谁出现点谁: 帧里只有 a → 点 a 的命中中心
+        got = actions.wait_tap_any(_FakeDev([frame_a]), tgts, timeout=1, interval=0.02,
+                                   log=logs2.append)
+        assert got == {"a.png"}, got
+        assert taps2 == [(360, 120)], taps2
+        # b 的固定点击点: 命中处不是点击点
+        taps2.clear()
+        got = actions.wait_tap_any(_FakeDev([clean, frame_b]), tgts, timeout=2,
+                                   interval=0.02, log=logs2.append)
+        assert got == {"b.png"}, got
+        assert taps2 == [(111, 222)], taps2
+        # until 集齐即止: 两个都点到才收口, 不等满 timeout
+        taps2.clear()
+        t0 = time.monotonic()
+        got = actions.wait_tap_any(_FakeDev([frame_a, frame_b]), tgts, timeout=30,
+                                   interval=0.02, until={"a.png", "b.png"})
+        assert got == {"a.png", "b.png"}, got
+        assert time.monotonic() - t0 < 5, "until 集齐应提前收口, 不等满 timeout"
+        # 超时: 一个都没出现 → 空集合
+        taps2.clear()
+        got = actions.wait_tap_any(_FakeDev([clean]), tgts, timeout=0.25, interval=0.05)
+        assert got == set() and taps2 == [], (got, taps2)
+        # stop_event: 置位立即停, 不再点
+        taps2.clear()
+        ev3 = threading.Event()
+        ev3.set()
+        got = actions.wait_tap_any(_FakeDev([frame_a]), tgts, timeout=30, interval=0.05,
+                                   stop_event=ev3)
+        assert got == set() and taps2 == [], (got, taps2)
+        # 缺模板的项跳过, 不让整表崩(素材渐进添加)
+        got = actions.wait_tap_any(_FakeDev([frame_a]),
+                                   [actions.TapTarget("missing.png"), actions.TapTarget("a.png")],
+                                   timeout=1, interval=0.02)
+        assert got == {"a.png"}, got
+
+
+def check_ocr():
+    """OCR/readout 层: 纯逻辑 + 慢引擎并发闸 + 逐字读数。"""
     # ---- OCR 纯逻辑 ----
     assert best_match([(100, 200, "军团任务发布员"), (300, 100, "军团服务商店")], "军团任务发布员")[:2] == (100, 200)
     assert best_match([(100, 200, "军团任务发布岗")], "军团任务发布员")[2] >= 0.7  # 错1字仍命中
@@ -467,6 +537,7 @@ def main():
 
     # ---- readout 逐字读数: 放大 + 分数优先 NMS + 按 x 排序 ----
     # (画布与模板各自放大后拼合 —— 整体放大和单独放大边缘插值不同, 会把分数压到阈值线)
+    rng = np.random.default_rng(7)
     glyph1 = (150 - rng.integers(0, 90, (14, 10))).astype(np.uint8)   # 带纹理的字形
     glyph2 = (150 - rng.integers(0, 90, (14, 12))).astype(np.uint8)
     t1 = enlarge(cv2.cvtColor(glyph1, cv2.COLOR_GRAY2BGR))
@@ -476,10 +547,10 @@ def main():
     big[40:96, 240:240 + t2.shape[1], :] = t2
     assert read_digits(big, {"1": t1, "2": t2}) == "12"
 
-    # ---- Ops 门面(帧源 seam: 假 adapter 离线覆盖等待/冻结/停止/找点全策略) ----
-    from . import ops as ops_mod
-    from .dmsoft import DmSoft
-    from .ops import FrameSource, Ops
+
+def check_ops():
+    """Ops 门面: 帧源 seam 假 adapter 离线覆盖等待/冻结/停止/找点全策略。"""
+    rng, screen, tpl = _vision_fixtures()
 
     class _FakeDm:
         """FrameSource 假 adapter: 逐帧吐(耗尽停末张), 点击/拖拽只记账。"""
@@ -592,243 +663,9 @@ def main():
     assert Ops(_FakeDm([fa, fa, fb])).wait_change(
         None, timeout=1, interval=0.02) is True
 
-    # ---- ime 资产在位 ----
-    assert ime.ASSET_APK.exists(), "ADBKeyboard.apk 应随库打包在 imgbot/assets/"
 
-    # ---- win32: 拟人轨迹(纯计算) ----
-    path = human_path(0, 0, 100, 200, random.Random(1))
-    assert path[-1][:2] == (100, 200) and len(path) >= 6
-    assert all(dt >= 0 for _x, _y, dt in path)
-
-    # ---- win32: 后台键鼠消息序列(message-only 录制窗口, 不碰任何真窗口) ----
-    hwnd, records, pump = create_message_window()
-    try:
-        gw = GameWindow(hwnd)
-        mk = MouseKeyboard(gw, inter_action_delay=0, rng=random.Random(2))
-        mk.click(30, 40)
-        pump()
-        kinds = [m for m, _w, _l in records]
-        assert WM_MOUSEMOVE in kinds and WM_LBUTTONDOWN in kinds and WM_LBUTTONUP in kinds
-        for m, _w, lp in records:
-            if m == WM_LBUTTONDOWN:
-                assert lp == (40 << 16) | 30, hex(lp)  # lParam: 高16位y 低16位x
-        records.clear()
-        mk.type_text("魔A")
-        pump()
-        chars = [chr(w) for m, w, _l in records if m == WM_CHAR]
-        assert chars == list("魔A"), chars
-        records.clear()
-        mk.key_tap(0x0D)                       # VK_RETURN: 主键盘回车, 非扩展键
-        pump()
-        keys = [(m, w, l) for m, w, l in records if m in (WM_KEYDOWN, WM_KEYUP)]
-        assert [m for m, _w, _l in keys] == [WM_KEYDOWN, WM_KEYUP], keys
-        scan = _user32.MapVirtualKeyW(0x0D, 0)  # 扫描码按真机布局查, 断言不写死
-        assert keys[0][1] == 0x0D and keys[0][2] == 1 | (scan << 16), (hex(keys[0][2]),)
-        assert keys[1][2] == 1 | (scan << 16) | (1 << 30) | (1 << 31), (hex(keys[1][2]),)
-        records.clear()
-        send_ime_string(gw, "魔A")            # 大漠 SendString 真身配方
-        pump()
-        imes = [w for m, w, _l in records if m == 0x286]
-        gbk = "魔A".encode("gbk")
-        assert imes == [(gbk[0] << 8) | gbk[1], gbk[2]], \
-            (imes, "WM_IME_CHAR 应 GBK 双字节大端打包/ASCII 单字节直传")
-        # 补齐后的 windows 通道全表面(与 dx/SendInput 同形): 右键/滚轮/裸按钮/拖拽
-        records.clear()
-        mk.right_click(30, 40)
-        pump()
-        kinds = [m for m, _w, _l in records]
-        assert 0x204 in kinds and 0x205 in kinds, kinds
-        assert [w for m, w, _l in records if m == 0x204] == [2], "右键按下 wParam=MK_RBUTTON"
-        records.clear()
-        mk.left_down()
-        mk.left_up()
-        mk.wheel(up=True)
-        pump()
-        kinds = [m for m, _w, _l in records]
-        assert kinds[:2] == [WM_LBUTTONDOWN, WM_LBUTTONUP], kinds
-        assert [w for m, w, _l in records if m == 0x20A] == [120 << 16], \
-            "WM_MOUSEWHEEL wParam 高16位=delta"
-        records.clear()
-        mk.drag(10, 10, 50, 50, steps=2, interval=0)
-        pump()
-        kinds = [m for m, _w, _l in records]
-        # 拖拽序列: 移到起点 → LDOWN → 2 步插值移动 → LUP; 光标记到终点
-        assert kinds[0] == WM_MOUSEMOVE and kinds[1] == WM_LBUTTONDOWN, kinds
-        assert kinds[-1] == WM_LBUTTONUP and kinds.count(WM_MOUSEMOVE) == 3, kinds
-        assert mk.pos == (50, 50), mk.pos
-    finally:
-        _user32.DestroyWindow(hwnd)
-
-    # ---- win32: 剪贴板粘贴(send_paste: 剪贴板往返 + WM_PASTE 投递) ----
-    hwnd2, records2, pump2 = create_message_window()
-    try:
-        send_paste(GameWindow(hwnd2), "粘贴123")
-        pump2()
-        assert any(m == WM_PASTE for m, _w, _l in records2)
-        assert _user32.OpenClipboard(None)
-        try:
-            h = _user32.GetClipboardData(CF_UNICODETEXT)
-            p = _kernel32.GlobalLock(h)
-            got = ctypes.wstring_at(p).split("\x00")[0]
-            _kernel32.GlobalUnlock(h)
-        finally:
-            _user32.CloseClipboard()
-        assert got == "粘贴123", got
-    finally:
-        _user32.DestroyWindow(hwnd2)
-
-    # ---- win32: PrintWindow 截屏链路(纯色窗口 + BGR 序验证) ----
-    vh, cleanup = create_visible_window(200, 100, (30, 200, 90))  # RGB(30,200,90)
-    try:
-        time.sleep(0.3)
-        img = None
-        for _ in range(3):  # DWM 合成首帧可能黑: 排空重绘后重试
-            img = capture_client(GameWindow(vh))
-            if int(img.max()) > 0:
-                break
-            time.sleep(0.25)
-        assert img is not None and img.shape[:2] == (100, 200), img.shape if img is not None else None
-        assert int(img.max()) > 0, "截图全黑: DWM 未完成合成"
-        b, g, r = img[50, 100]
-        assert abs(int(b) - 90) <= 6 and abs(int(g) - 200) <= 6 and abs(int(r) - 30) <= 6, (b, g, r)
-    finally:
-        cleanup()
-
-    # ---- win32: 屏幕截取(前台 BitBlt, 与 PrintWindow 后台互补; 用纯色窗口验色) ----
-    # 依赖"该窗口当前可见": 桌面随便开个窗口盖住它就会拍到别的东西 —— 先提 TOPMOST 再拍
-    _user32.SetWindowPos.restype = wt.BOOL
-    _user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int,
-                                     ctypes.c_int, ctypes.c_int, wt.UINT]
-    _TOPMOST, _NOTOPMOST, _SWP = -1, -2, 0x0003  # SWP_NOSIZE | SWP_NOMOVE
-    vh3, cleanup3 = create_visible_window(120, 60, (30, 200, 90))
-    try:
-        time.sleep(0.3)
-        sx, sy, sw, sh = GameWindow(vh3).client_rect()
-        _user32.SetWindowPos(vh3, _TOPMOST, 0, 0, 0, 0, _SWP)
-        shot = None
-        for _ in range(3):  # 前台合成有竞态, 全黑重试
-            shot = capture_screen((sx, sy, sw, sh))
-            if int(shot.max()) > 0:
-                break
-            time.sleep(0.25)
-        assert shot.shape[:2] == (sh, sw), shot.shape
-        assert int(shot.max()) > 0, "屏幕截取全黑: 前台合成未就绪"
-        b, g, r = shot[sh // 2, sw // 2]
-        assert abs(int(b) - 90) <= 6 and abs(int(g) - 200) <= 6 and abs(int(r) - 30) <= 6, (b, g, r)
-        vx, vy, vw, vht = virtual_screen_rect()
-        assert capture_screen().shape[:2] == (vht, vw), "全虚拟屏幕截取尺寸与 virtual_screen_rect 不符"
-        assert any(t == "imgbot-selfcheck" for _h, _c, t in list_windows()), \
-            "刚创建的可见窗口应出现在 list_windows 里"
-    finally:
-        _user32.SetWindowPos(vh3, _NOTOPMOST, 0, 0, 0, 0, _SWP)
-        cleanup3()
-
-    # ---- win32: 拾取高亮(xor_frame XOR 自逆: 画+擦往返不残留)与 window_rect ----
-    vh4, cleanup4 = create_visible_window(120, 60, (30, 200, 90))
-    try:
-        l, t, r, b = GameWindow(vh4).window_rect()
-        assert r > l and b > t, ((l, t, r, b),)
-        xor_frame((l, t, r, b))
-        xor_frame((l, t, r, b))  # 第二次应还原屏幕(自逆), 不炸即通过
-        assert GameWindow(vh4).pid() > 0, "窗口应归属一个活着的进程"
-        assert GameWindow(vh4).process_path().endswith(".exe"), "应取到本进程可执行路径"
-        hbtn = _user32.CreateWindowExW(0, "BUTTON", "子按钮", 0x50000000,  # WS_CHILD|WS_VISIBLE
-                                       10, 10, 50, 20, vh4, None, None, None)
-        assert hbtn, "创建子按钮失败"
-        sub = GameWindow.find(class_name="BUTTON", parent=vh4)
-        assert sub is not None and sub.hwnd == hbtn, "find(parent=) 应在子孙里按类名找到子窗口"
-    finally:
-        cleanup4()
-
-    # ---- win32: 伪最小化停靠往返(状态位必须跟着 park 走, 曾恒为 False) ----
-    vh2, cleanup2 = create_visible_window(200, 100, (30, 200, 90))
-    try:
-        gw = GameWindow(vh2)
-        assert gw.is_pseudo_minimized is False
-        gw.park_offscreen(True)
-        assert gw.is_pseudo_minimized is True, "停靠后应报告伪最小化"
-        gw.park_offscreen(False)
-        assert gw.is_pseudo_minimized is False
-    finally:
-        cleanup2()
-
-    # ---- win32: 大漠窗口族(SetWindowState 0-14 口径 + EnumWindow 过滤位) ----
-    from .win32.window import enum_windows_dm, set_window_state
-    from .dmsoft import DmSoft
-    dmw = DmSoft()
-    vh5, cleanup5 = create_visible_window(120, 60, (30, 200, 90))
-    try:
-        assert set_window_state(vh5, 6) and not _user32.IsWindowVisible(vh5)
-        assert set_window_state(vh5, 7) and _user32.IsWindowVisible(vh5)
-        assert set_window_state(vh5, 8)
-        assert _user32.GetWindowLongW(vh5, -20) & 0x8, "置顶后应带 WS_EX_TOPMOST"
-        assert set_window_state(vh5, 9)
-        assert not _user32.GetWindowLongW(vh5, -20) & 0x8
-        assert set_window_state(vh5, 10) and not _user32.IsWindowEnabled(vh5)
-        assert set_window_state(vh5, 11) and _user32.IsWindowEnabled(vh5)
-        assert set_window_state(vh5, 2) and _user32.IsIconic(vh5)
-        assert set_window_state(vh5, 12) and not _user32.IsIconic(vh5)
-        assert vh5 in enum_windows_dm(0, "imgbot-selfcheck", "", 1 | 8), \
-            "标题+可见过滤应枚举到自己"
-        assert vh5 not in enum_windows_dm(0, "绝不存在的标题xyz", "", 1 | 8)
-        # filter 16/32/64: 最小化/最大化/弹出式状态位
-        assert set_window_state(vh5, 2) and _user32.IsIconic(vh5)
-        assert vh5 in enum_windows_dm(0, "", "", 16), "最小化窗应被 filter 16 命中"
-        assert set_window_state(vh5, 12)
-        assert set_window_state(vh5, 4) and _user32.IsZoomed(vh5)
-        assert vh5 in enum_windows_dm(0, "", "", 32), "最大化窗应被 filter 32 命中"
-        assert set_window_state(vh5, 12)
-        hpop = _user32.CreateWindowExW(0, "BUTTON", "imgbot-selfcheck",
-                                       0x80000000 | 0x10000000,  # WS_POPUP|WS_VISIBLE
-                                       5, 5, 60, 20, None, None, None, None)
-        try:
-            assert hpop and hpop in enum_windows_dm(0, "", "", 64), "弹出式窗应被 filter 64 命中"
-            assert vh5 not in enum_windows_dm(0, "", "", 64), "重叠窗不该进 filter 64"
-        finally:
-            _user32.DestroyWindow(hpop)
-        # 子窗句柄置顶属调用方责任(库哑透传, 见 set_window_state 口径), 不设断言
-        # 拟人首击起点播种: 真实光标→客户区(窗外钳边), 不再恒 (0,0) 会话指纹
-        from .win32.input import MouseKeyboard as _MK
-        sx, sy, cw, ch = GameWindow(vh5).client_rect()
-        _user32.SetCursorPos(sx + cw // 2, sy + ch // 2)
-        assert _MK(GameWindow(vh5)).pos == (cw // 2, ch // 2), "窗内: 种子=光标落点"
-        _user32.SetCursorPos(sx - 50, sy - 50)          # 窗外左上 → 钳边
-        assert _MK(GameWindow(vh5)).pos == (0, 0), "窗外: 应钳到贴边"
-        # DmSoft 层包装(大漠壳转发必须与 win32 底层同效)
-        assert dmw.SetWindowState(vh5, 6) == 1 and not _user32.IsWindowVisible(vh5)
-        assert dmw.SetWindowState(vh5, 7) == 1
-        assert str(vh5) in dmw.EnumWindow(0, "imgbot-selfcheck", "", 1 | 8)
-        # 窗口族单风格(全走 GameWindow, 不再有壳内联 ctypes)
-        assert dmw.GetWindowClass(vh5).lower().startswith("imgbotvis"), dmw.GetWindowClass(vh5)
-        assert dmw.GetWindowTitle(vh5) == "imgbot-selfcheck", dmw.GetWindowTitle(vh5)
-        dmw.MoveWindow(vh5, 100, 100)
-        assert GameWindow(vh5).window_rect()[:2] == (100, 100), "MoveWindow 应真移动"
-        assert isinstance(dmw.GetForegroundWindow(), int)
-        from .win32.window import pids_of_process
-        assert pids_of_process("python") or pids_of_process("uv"), \
-            "本进程名应能取到 pid 集"
-        try:
-            set_window_state(vh5, 99)
-            assert False, "越界 flag 应抛 ValueError"
-        except ValueError:
-            pass
-    finally:
-        cleanup5()
-
-    # ---- win32: 进程 DACL 解封(护甲锁; 本进程无锁, 验证幂等不炸+返回 bool) ----
-    from .win32.window import unlock_process_dacl
-    assert isinstance(unlock_process_dacl(_kernel32.GetCurrentProcessId()), bool)
-
-    # ---- win32: LockInput(BlockInput; lock=1 需管理员, 不断言锁定结果只走通解锁;
-    # 记账挂实例 —— 锁/解同一对象才有"真锁过"语义) ----
-    from .dmsoft import DmSoft
-    dmli = DmSoft()
-    try:
-        dmli.LockInput(1)
-    finally:
-        assert dmli.LockInput(0) == 1
-
-    # ---- nav: 界面导航图(定位两层/BFS/自愈/迷路/打断, 离线 FakeOps) ----
+def check_nav():
+    """nav 层: 界面导航图(定位两层/BFS/自愈/迷路/打断, 离线 FakeOps)。"""
     class FakeOps:
         """锚点名当"画面": state=当前屏, popups=屏上挂着的弹窗。"""
         def __init__(self):
@@ -915,9 +752,285 @@ def main():
     except ValueError:
         pass
 
+
+def check_win32_input():
+    """win32 键鼠层: 拟人轨迹/后台消息序列/剪贴板/首击播种/LockInput。"""
+    # ---- win32: 拟人轨迹(纯计算) ----
+    path = human_path(0, 0, 100, 200, random.Random(1))
+    assert path[-1][:2] == (100, 200) and len(path) >= 6
+    assert all(dt >= 0 for _x, _y, dt in path)
+
+    # ---- win32: 后台键鼠消息序列(message-only 录制窗口, 不碰任何真窗口) ----
+    hwnd, records, pump = create_message_window()
+    try:
+        gw = GameWindow(hwnd)
+        mk = MouseKeyboard(gw, inter_action_delay=0, rng=random.Random(2))
+        mk.click(30, 40)
+        pump()
+        kinds = [m for m, _w, _l in records]
+        assert WM_MOUSEMOVE in kinds and WM_LBUTTONDOWN in kinds and WM_LBUTTONUP in kinds
+        for m, _w, lp in records:
+            if m == WM_LBUTTONDOWN:
+                assert lp == (40 << 16) | 30, hex(lp)  # lParam: 高16位y 低16位x
+        records.clear()
+        mk.type_text("魔A")
+        pump()
+        chars = [chr(w) for m, w, _l in records if m == WM_CHAR]
+        assert chars == list("魔A"), chars
+        records.clear()
+        mk.key_tap(0x0D)                       # VK_RETURN: 主键盘回车, 非扩展键
+        pump()
+        keys = [(m, w, l) for m, w, l in records if m in (WM_KEYDOWN, WM_KEYUP)]
+        assert [m for m, _w, _l in keys] == [WM_KEYDOWN, WM_KEYUP], keys
+        scan = _user32.MapVirtualKeyW(0x0D, 0)  # 扫描码按真机布局查, 断言不写死
+        assert keys[0][1] == 0x0D and keys[0][2] == 1 | (scan << 16), (hex(keys[0][2]),)
+        assert keys[1][2] == 1 | (scan << 16) | (1 << 30) | (1 << 31), (hex(keys[1][2]),)
+        records.clear()
+        send_ime_string(gw, "魔A")            # 大漠 SendString 真身配方
+        pump()
+        imes = [w for m, w, _l in records if m == 0x286]
+        gbk = "魔A".encode("gbk")
+        assert imes == [(gbk[0] << 8) | gbk[1], gbk[2]], \
+            (imes, "WM_IME_CHAR 应 GBK 双字节大端打包/ASCII 单字节直传")
+        # 补齐后的 windows 通道全表面(与 dx/SendInput 同形): 右键/滚轮/裸按钮/拖拽
+        records.clear()
+        mk.right_click(30, 40)
+        pump()
+        kinds = [m for m, _w, _l in records]
+        assert 0x204 in kinds and 0x205 in kinds, kinds
+        assert [w for m, w, _l in records if m == 0x204] == [2], "右键按下 wParam=MK_RBUTTON"
+        records.clear()
+        mk.left_down()
+        mk.left_up()
+        mk.wheel(up=True)
+        pump()
+        kinds = [m for m, _w, _l in records]
+        assert kinds[:2] == [WM_LBUTTONDOWN, WM_LBUTTONUP], kinds
+        assert [w for m, w, _l in records if m == 0x20A] == [120 << 16], \
+            "WM_MOUSEWHEEL wParam 高16位=delta"
+        records.clear()
+        mk.drag(10, 10, 50, 50, steps=2, interval=0)
+        pump()
+        kinds = [m for m, _w, _l in records]
+        # 拖拽序列: 移到起点 → LDOWN → 2 步插值移动 → LUP; 光标记到终点
+        assert kinds[0] == WM_MOUSEMOVE and kinds[1] == WM_LBUTTONDOWN, kinds
+        assert kinds[-1] == WM_LBUTTONUP and kinds.count(WM_MOUSEMOVE) == 3, kinds
+        assert mk.pos == (50, 50), mk.pos
+    finally:
+        _user32.DestroyWindow(hwnd)
+
+    # ---- win32: 剪贴板粘贴(send_paste: 剪贴板往返 + WM_PASTE 投递) ----
+    hwnd2, records2, pump2 = create_message_window()
+    try:
+        send_paste(GameWindow(hwnd2), "粘贴123")
+        pump2()
+        assert any(m == WM_PASTE for m, _w, _l in records2)
+        assert _user32.OpenClipboard(None)
+        try:
+            h = _user32.GetClipboardData(CF_UNICODETEXT)
+            p = _kernel32.GlobalLock(h)
+            got = ctypes.wstring_at(p).split("\x00")[0]
+            _kernel32.GlobalUnlock(h)
+        finally:
+            _user32.CloseClipboard()
+        assert got == "粘贴123", got
+    finally:
+        _user32.DestroyWindow(hwnd2)
+
+    # ---- win32: 拟人首击起点播种: 真实光标→客户区(窗外钳边), 不再恒 (0,0) 会话指纹 ----
+    vh6, cleanup6 = create_visible_window(200, 100, (30, 200, 90))
+    try:
+        sx, sy, cw, ch = GameWindow(vh6).client_rect()
+        _user32.SetCursorPos(sx + cw // 2, sy + ch // 2)
+        assert MouseKeyboard(GameWindow(vh6)).pos == (cw // 2, ch // 2), "窗内: 种子=光标落点"
+        _user32.SetCursorPos(sx - 50, sy - 50)          # 窗外左上 → 钳边
+        assert MouseKeyboard(GameWindow(vh6)).pos == (0, 0), "窗外: 应钳到贴边"
+    finally:
+        cleanup6()
+
+    # ---- win32: LockInput(BlockInput; lock=1 需管理员, 不断言锁定结果只走通解锁;
+    # 记账挂实例 —— 锁/解同一对象才有"真锁过"语义) ----
+    dmli = DmSoft()
+    try:
+        dmli.LockInput(1)
+    finally:
+        assert dmli.LockInput(0) == 1
+
+
+def check_win32_capture():
+    """win32 截图层: PrintWindow 后台链路 + 前台 BitBlt(用纯色窗口验色)。"""
+    # ---- win32: PrintWindow 截屏链路(纯色窗口 + BGR 序验证) ----
+    vh, cleanup = create_visible_window(200, 100, (30, 200, 90))  # RGB(30,200,90)
+    try:
+        time.sleep(0.3)
+        img = None
+        for _ in range(3):  # DWM 合成首帧可能黑: 排空重绘后重试
+            img = capture_client(GameWindow(vh))
+            if int(img.max()) > 0:
+                break
+            time.sleep(0.25)
+        assert img is not None and img.shape[:2] == (100, 200), img.shape if img is not None else None
+        assert int(img.max()) > 0, "截图全黑: DWM 未完成合成"
+        b, g, r = img[50, 100]
+        assert abs(int(b) - 90) <= 6 and abs(int(g) - 200) <= 6 and abs(int(r) - 30) <= 6, (b, g, r)
+    finally:
+        cleanup()
+
+    # ---- win32: 屏幕截取(前台 BitBlt, 与 PrintWindow 后台互补; 用纯色窗口验色) ----
+    # 依赖"该窗口当前可见": 桌面随便开个窗口盖住它就会拍到别的东西 —— 先提 TOPMOST 再拍
+    _user32.SetWindowPos.restype = wt.BOOL
+    _user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, ctypes.c_int, wt.UINT]
+    _TOPMOST, _NOTOPMOST, _SWP = -1, -2, 0x0003  # SWP_NOSIZE | SWP_NOMOVE
+    vh3, cleanup3 = create_visible_window(120, 60, (30, 200, 90))
+    try:
+        time.sleep(0.3)
+        sx, sy, sw, sh = GameWindow(vh3).client_rect()
+        _user32.SetWindowPos(vh3, _TOPMOST, 0, 0, 0, 0, _SWP)
+        shot = None
+        for _ in range(3):  # 前台合成有竞态, 全黑重试
+            shot = capture_screen((sx, sy, sw, sh))
+            if int(shot.max()) > 0:
+                break
+            time.sleep(0.25)
+        assert shot.shape[:2] == (sh, sw), shot.shape
+        assert int(shot.max()) > 0, "屏幕截取全黑: 前台合成未就绪"
+        b, g, r = shot[sh // 2, sw // 2]
+        assert abs(int(b) - 90) <= 6 and abs(int(g) - 200) <= 6 and abs(int(r) - 30) <= 6, (b, g, r)
+        vx, vy, vw, vht = virtual_screen_rect()
+        assert capture_screen().shape[:2] == (vht, vw), "全虚拟屏幕截取尺寸与 virtual_screen_rect 不符"
+        assert any(t == "imgbot-selfcheck" for _h, _c, t in list_windows()), \
+            "刚创建的可见窗口应出现在 list_windows 里"
+    finally:
+        _user32.SetWindowPos(vh3, _NOTOPMOST, 0, 0, 0, 0, _SWP)
+        cleanup3()
+
+
+def check_win32_window():
+    """win32 窗口层: 拾取高亮/伪最小化/大漠窗口族/DACL 解封。"""
+    # ---- win32: 拾取高亮(xor_frame XOR 自逆: 画+擦往返不残留)与 window_rect ----
+    vh4, cleanup4 = create_visible_window(120, 60, (30, 200, 90))
+    try:
+        l, t, r, b = GameWindow(vh4).window_rect()
+        assert r > l and b > t, ((l, t, r, b),)
+        xor_frame((l, t, r, b))
+        xor_frame((l, t, r, b))  # 第二次应还原屏幕(自逆), 不炸即通过
+        assert GameWindow(vh4).pid() > 0, "窗口应归属一个活着的进程"
+        assert GameWindow(vh4).process_path().endswith(".exe"), "应取到本进程可执行路径"
+        hbtn = _user32.CreateWindowExW(0, "BUTTON", "子按钮", 0x50000000,  # WS_CHILD|WS_VISIBLE
+                                       10, 10, 50, 20, vh4, None, None, None)
+        assert hbtn, "创建子按钮失败"
+        sub = GameWindow.find(class_name="BUTTON", parent=vh4)
+        assert sub is not None and sub.hwnd == hbtn, "find(parent=) 应在子孙里按类名找到子窗口"
+    finally:
+        cleanup4()
+
+    # ---- win32: 伪最小化停靠往返(状态位必须跟着 park 走, 曾恒为 False) ----
+    vh2, cleanup2 = create_visible_window(200, 100, (30, 200, 90))
+    try:
+        gw = GameWindow(vh2)
+        assert gw.is_pseudo_minimized is False
+        gw.park_offscreen(True)
+        assert gw.is_pseudo_minimized is True, "停靠后应报告伪最小化"
+        gw.park_offscreen(False)
+        assert gw.is_pseudo_minimized is False
+    finally:
+        cleanup2()
+
+    # ---- win32: 大漠窗口族(SetWindowState 0-14 口径 + EnumWindow 过滤位) ----
+    dmw = DmSoft()
+    vh5, cleanup5 = create_visible_window(120, 60, (30, 200, 90))
+    try:
+        assert set_window_state(vh5, 6) and not _user32.IsWindowVisible(vh5)
+        assert set_window_state(vh5, 7) and _user32.IsWindowVisible(vh5)
+        assert set_window_state(vh5, 8)
+        assert _user32.GetWindowLongW(vh5, -20) & 0x8, "置顶后应带 WS_EX_TOPMOST"
+        assert set_window_state(vh5, 9)
+        assert not _user32.GetWindowLongW(vh5, -20) & 0x8
+        assert set_window_state(vh5, 10) and not _user32.IsWindowEnabled(vh5)
+        assert set_window_state(vh5, 11) and _user32.IsWindowEnabled(vh5)
+        assert set_window_state(vh5, 2) and _user32.IsIconic(vh5)
+        assert set_window_state(vh5, 12) and not _user32.IsIconic(vh5)
+        assert vh5 in enum_windows_dm(0, "imgbot-selfcheck", "", 1 | 8), \
+            "标题+可见过滤应枚举到自己"
+        assert vh5 not in enum_windows_dm(0, "绝不存在的标题xyz", "", 1 | 8)
+        # filter 16/32/64: 最小化/最大化/弹出式状态位
+        assert set_window_state(vh5, 2) and _user32.IsIconic(vh5)
+        assert vh5 in enum_windows_dm(0, "", "", 16), "最小化窗应被 filter 16 命中"
+        assert set_window_state(vh5, 12)
+        assert set_window_state(vh5, 4) and _user32.IsZoomed(vh5)
+        assert vh5 in enum_windows_dm(0, "", "", 32), "最大化窗应被 filter 32 命中"
+        assert set_window_state(vh5, 12)
+        hpop = _user32.CreateWindowExW(0, "BUTTON", "imgbot-selfcheck",
+                                       0x80000000 | 0x10000000,  # WS_POPUP|WS_VISIBLE
+                                       5, 5, 60, 20, None, None, None, None)
+        try:
+            assert hpop and hpop in enum_windows_dm(0, "", "", 64), "弹出式窗应被 filter 64 命中"
+            assert vh5 not in enum_windows_dm(0, "", "", 64), "重叠窗不该进 filter 64"
+        finally:
+            _user32.DestroyWindow(hpop)
+        # 子窗句柄置顶属调用方责任(库哑透传, 见 set_window_state 口径), 不设断言
+        # DmSoft 层包装(大漠壳转发必须与 win32 底层同效)
+        assert dmw.SetWindowState(vh5, 6) == 1 and not _user32.IsWindowVisible(vh5)
+        assert dmw.SetWindowState(vh5, 7) == 1
+        assert str(vh5) in dmw.EnumWindow(0, "imgbot-selfcheck", "", 1 | 8)
+        # 窗口族单风格(全走 GameWindow, 不再有壳内联 ctypes)
+        assert dmw.GetWindowClass(vh5).lower().startswith("imgbotvis"), dmw.GetWindowClass(vh5)
+        assert dmw.GetWindowTitle(vh5) == "imgbot-selfcheck", dmw.GetWindowTitle(vh5)
+        dmw.MoveWindow(vh5, 100, 100)
+        assert GameWindow(vh5).window_rect()[:2] == (100, 100), "MoveWindow 应真移动"
+        assert isinstance(dmw.GetForegroundWindow(), int)
+        assert pids_of_process("python") or pids_of_process("uv"), \
+            "本进程名应能取到 pid 集"
+        try:
+            set_window_state(vh5, 99)
+            assert False, "越界 flag 应抛 ValueError"
+        except ValueError:
+            pass
+    finally:
+        cleanup5()
+
+    # ---- win32: 进程 DACL 解封(护甲锁; 本进程无锁, 验证幂等不炸+返回 bool) ----
+    assert isinstance(unlock_process_dacl(_kernel32.GetCurrentProcessId()), bool)
+
+
+def check_docs():
+    """文档 lint: api.md/README 引用的 API 真实存在 + 注释无吞码。"""
     _check_readme_api()
     _check_no_swallowed_code()
 
+
+_LAYERS = {
+    "adb": check_adb,
+    "vision": check_vision,
+    "actions": check_actions,
+    "ocr": check_ocr,
+    "ops": check_ops,
+    "nav": check_nav,
+    "win32_input": check_win32_input,
+    "win32_capture": check_win32_capture,
+    "win32_window": check_win32_window,
+    "docs": check_docs,
+}
+_ALIASES = {"win32": ["win32_input", "win32_capture", "win32_window"]}
+
+
+def main(argv=None):
+    """按层跑自检; 不带参数全量。用法: python -m imgbot.selfcheck [层名[,层名...]]"""
+    args = sys.argv[1:] if argv is None else argv
+    if args:
+        want = []
+        for name in ",".join(args).split(","):
+            want.extend(_ALIASES.get(name, [name]))
+        unknown = [n for n in want if n not in _LAYERS]
+        if unknown:
+            raise SystemExit(f"未知层: {', '.join(unknown)} —— "
+                             f"可选: {', '.join(_LAYERS)}(win32=三段合选)")
+    else:
+        want = list(_LAYERS)
+    for name in want:
+        _LAYERS[name]()
+        print(f"selfcheck[{name}] ok")
     print("imgbot selfcheck ok")
 
 

@@ -121,7 +121,7 @@ class BaseMouseKeyboard:
 
     子类实现投递原语: _move_raw/_press/_second_press/_wheel/_key_down/
     _key_up/_char, 外加 _alive(存活检查)与 _pre_motor(动作前置钩, 前台通道
-    抢前台用)。公开面三通道同形, DmSoft/Win32Target 直呼不嗅探。
+    抢前台用)。公开面三通道同形, DmSoft/Ops(dm.keymouse) 直呼不嗅探。
     """
 
     def __init__(self, inter_action_delay=0.05, rng=None):

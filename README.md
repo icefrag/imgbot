@@ -21,12 +21,15 @@ PC 窗口(Win32) + 安卓模拟器(adb) 双后端的图色自动化库: 模板�
     imgbot = { path = "../imgbot" }       # 同机开发; 跨机器改 git+tag
 
 ```python
-from imgbot.target import AdbTarget, Win32Target
+from imgbot.target import AdbTarget
+from imgbot.dmsoft import DmSoft
 from imgbot.win32.window import GameWindow
 from imgbot import vision
 
 t = AdbTarget("127.0.0.1:5555")                          # 安卓模拟器/真机
-t = Win32Target(GameWindow.find(class_name="XXX"))       # PC 窗口, 绑定一次全打它
+t = DmSoft()                                             # PC 窗口走大漠全词汇壳
+t.BindWindow(GameWindow.find(class_name="XXX").hwnd,
+             "gdi", "windows", "windows", 0)             # 绑定一次全打它
 
 hit = vision.find(t.screenshot(), vision.load("btn.png"))    # (x, y, score) 或 None
 t.tap(*hit[:2])
