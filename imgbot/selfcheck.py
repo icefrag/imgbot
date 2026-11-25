@@ -680,19 +680,27 @@ def check_ocr():
             _cur[0] -= 1
         return "r"
 
-    _seed = ocr_mod._engines
-    ocr_mod._engines = {False: ocr_mod._Capped(_fake_raw)}
+    # 桩只播**裸**假引擎: 闸只有 _SelfHeal 一层(2026-11-25 修, 旧桩再包一层闸 → 同线程
+    # 对同一信号量取两次, 闸=1 必死锁 —— 实测 join 超时 _done=[], 默认闸宽下只是碰巧
+    # 没撞上) —— 所以两种闸宽各跑一遍: 默认宽验"不超闸", 闸=1 验"不双重取闸"
+    _seed, _sem_seed = ocr_mod._engines, ocr_mod._sem_slow
     try:
-        _ths = [threading.Thread(target=lambda: _done.append(ocr_mod.engine(False)(None)))
-                for _ in range(6)]
-        for t in _ths:
-            t.start()
-        for t in _ths:
-            t.join(5)
-        assert _done == ["r"] * 6, _done                    # 6发全跑完
-        assert 1 <= _max[0] <= ocr_mod.OCR_MAX_CONCURRENT, _max  # 同时在推不超闸
+        for _cap in (ocr_mod.OCR_MAX_CONCURRENT, 1):
+            _cur[0] = _max[0] = 0
+            _done.clear()
+            ocr_mod._engines = {False: _fake_raw}
+            ocr_mod._sem_slow = threading.Semaphore(_cap)
+            _ths = [threading.Thread(daemon=True,
+                                     target=lambda: _done.append(ocr_mod.engine(False)(None)))
+                    for _ in range(6)]
+            for t in _ths:
+                t.start()
+            for t in _ths:
+                t.join(5)
+            assert _done == ["r"] * 6, (_cap, _done)       # 6发全跑完
+            assert 1 <= _max[0] <= _cap, (_cap, _max)       # 同时在推不超闸
     finally:
-        ocr_mod._engines = _seed
+        ocr_mod._engines, ocr_mod._sem_slow = _seed, _sem_seed
 
     # ---- readout 逐字读数: 放大 + 分数优先 NMS + 按 x 排序 ----
     # (画布与模板各自放大后拼合 —— 整体放大和单独放大边缘插值不同, 会把分数压到阈值线)
@@ -1143,6 +1151,18 @@ def check_win32_window():
             pass
         assert dm2.UnBindWindow() == 1
         assert GameWindow(vh6).window_rect()[:2] == prev_rect[:2], "解绑应还原窗口原位"
+        # 绑定中途失败(停靠之后的 mouse 分派抛错)同样要还原: 不还原则窗口悬在屏外细缝,
+        # 同对象重绑还会把细缝位当原位存档, 原位永久丢失(2026-11-25 修)
+        dm4 = DmSoft()
+        try:
+            dm4.BindWindow(vh6, "dx2", "foo", "windows", 0)
+            raise AssertionError("无效 mouse 模式应拒绝")
+        except NotImplementedError:
+            pass
+        assert GameWindow(vh6).window_rect()[:2] == prev_rect[:2], "绑定失败应还原窗口原位"
+        assert dm4.BindWindow(vh6, "dx2", "windows", "windows", 0) == 1    # 同对象改对后重绑
+        assert dm4.UnBindWindow() == 1
+        assert GameWindow(vh6).window_rect()[:2] == prev_rect[:2], "失败后重绑再解绑, 原位不应丢"
     finally:
         cleanup6()
 

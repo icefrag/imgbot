@@ -131,16 +131,23 @@ class DmSoft:
                 raise NotImplementedError(f"keypad 模式未实现: {keypad}")
             return 1
         except NotImplementedError:
+            self._unpark()
             raise
         except Exception as e:
+            self._unpark()
             self._last_error = 1
             raise RuntimeError(f"BindWindow 失败: {e}") from e
 
-    def UnBindWindow(self) -> int:
-        """解绑并释放资源(大漠: 脚本退出时调用)。dx2/dx3 停靠的窗口先还原位置。"""
+    def _unpark(self):
+        """还原 dx2/dx3 停靠的窗口位置(幂等)。绑定中途失败也走这里: 不还原则窗口悬在
+        屏外细缝, 且重绑换新 GameWindow 后会把细缝位当原位存档, 原位永久丢失。"""
         if self._parked and self._win is not None:
             self._win.park_offscreen(False)        # 挪回原位(dx2/dx3 无注入路)
             self._parked = False
+
+    def UnBindWindow(self) -> int:
+        """解绑并释放资源(大漠: 脚本退出时调用)。dx2/dx3 停靠的窗口先还原位置。"""
+        self._unpark()
         if self._dx is not None:
             self._dx.unbind()
         self._win = self._mk = self._dx = self._dxmk = None

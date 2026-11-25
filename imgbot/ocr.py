@@ -43,18 +43,6 @@ OCR_MAX_CONCURRENT = int(os.environ.get("IMGBOT_OCR_MAX_CONCURRENT", "3"))
 _sem_slow = threading.Semaphore(OCR_MAX_CONCURRENT)
 
 
-class _Capped:
-    """慢引擎并发闸代理: engine() 返回值的调用方(含消费项目直调 engine()(img))无感."""
-    __slots__ = ("_raw",)
-
-    def __init__(self, raw):
-        self._raw = raw
-
-    def __call__(self, img):
-        with _sem_slow:
-            return self._raw(img)
-
-
 def set_log_file(path) -> None:
     """消费项目注入 OCR 引擎日志落盘路径(多线程 append, 内部加锁); None=退回只打 stderr."""
     global _logf
