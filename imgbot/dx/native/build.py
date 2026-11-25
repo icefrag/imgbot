@@ -16,8 +16,12 @@ BIN = NATIVE.parent / "bin"
 OBF_STRS = [
     ("USER32", "user32.dll"), ("GDI32", "gdi32.dll"),
     ("OPENGL32", "opengl32.dll"), ("D3D9", "d3d9.dll"),
+    ("DXGI", "dxgi.dll"), ("D3D11", "d3d11.dll"),
     ("SWAPBUFFERS", "SwapBuffers"), ("WGLSWAPBUFFERS", "wglSwapBuffers"),
     ("DIRECT3DCREATE9", "Direct3DCreate9"),
+    ("CREATEDXGIFACTORY", "CreateDXGIFactory"), ("CREATEDXGIFACTORY1", "CreateDXGIFactory1"),
+    ("CREATEDXGIFACTORY2", "CreateDXGIFactory2"),
+    ("D3D11CREATEDEVICEANDSWAPCHAIN", "D3D11CreateDeviceAndSwapChain"),
     ("GLREADPIXELS", "glReadPixels"), ("GLGETINTEGERV", "glGetIntegerv"),
     ("GLGETERROR", "glGetError"), ("WGLCREATECONTEXT", "wglCreateContext"),
     ("WGLMAKECURRENT", "wglMakeCurrent"), ("WGLGETCURRENTCONTEXT", "wglGetCurrentContext"),
@@ -138,6 +142,13 @@ def build(zig: str):
            "-luser32", "-lgdi32"]
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
+    # d3d11 DXGI 验收靶(x86+x64, 测试用; x64 是 dx 通道首条 64 位图色靶)
+    for target, tag in targets:
+        cmd = [zig, "cc", "-target", target, "-O2", "-s",
+               "-o", str(BIN / f"d3d11test{tag}.exe"), str(NATIVE / "d3d11test.c"),
+               "-luser32", "-lgdi32", "-ld3d11", "-ldxgi"]
+        print("+", " ".join(cmd))
+        subprocess.run(cmd, check=True)
     # 键态钩子验收靶(x86 only, 测试用)
     cmd = [zig, "cc", "-target", "x86-windows", "-O2", "-s",
            "-o", str(BIN / "kspoll32.exe"), str(NATIVE / "kspoll.c"),

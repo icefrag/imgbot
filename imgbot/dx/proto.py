@@ -9,7 +9,7 @@ PROTO_VERSION +1, 心跳握手会拒掉旧版 DLL(大漠 0x8b0 段命令漂移�
 from __future__ import annotations
 
 SHM_MAGIC = 0x49425844            # "DXBI"
-PROTO_VERSION = 10                  # 10: CMD_SPEED arg0 改倍率×10 整数(原 float 位模式)
+PROTO_VERSION = 11                  # 11: +CMD_HOOK_DXGI(dx10/11/12 图色, 工单 damo-bg-capture/01)
 SHM_SIZE = 32 * 1024 * 1024       # 32MB
 FRAME_OFF = 4096                  # 帧区在 SHM 内的偏移
 
@@ -28,6 +28,7 @@ CMD_KEYSTATE = 11                 # 钩 GetKeyState/GetAsyncKeyState 喂虚拟�
 CMD_MOUSE_LOCK = 12               # 钩 GetCursorPos 返回虚拟光标
 CMD_MOUSE_PACK = 13               # dx 鼠标全家桶一键武装; arg1=武装位图
 CMD_SPEED = 14                    # 变速齿轮(dm 0x863 1:1): arg0=倍率×10(10=常速, 0=冻结)
+CMD_HOOK_DXGI = 15                # dxgi/d3d11 创建入口 MinHook(dx10/11/12 图色, 大漠 dx.graphic.3d.10plus 对应物)
 
 # CMD_KEY 的 mode
 KEY_DOWN = 0

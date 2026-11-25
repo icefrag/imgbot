@@ -11,6 +11,7 @@
 | API | 说明 |
 |---|---|
 | `AdbTarget(serial, adb_path="adb")` | 安卓模拟器/真机后端(adb 截图+输入, 天然后台) |
+| PC 窗口 display 词汇 `"dx2"`/`"dx3"` | **无注入后台图色**(大漠 dx2 原语义): 绑定即把窗口停靠屏外细缝(留 2×30px 防遮挡节流), 图色走 PrintWindow 读 DWM 重定向表面; unbind 还原窗口原位。杀软拦注入件时的备胎; 键鼠只支持 windows/windows2/normal(dx 通道拒绝) |
 | `Target` | 最小公共接口基类: `screenshot() -> BGR ndarray` / `tap(x, y)` |
 
 - `AdbTarget` 另有: `serial`(属性)、`save_screenshot(path)`、`swipe(...)`、`keyevent(code)`、
@@ -41,6 +42,8 @@
 | `is_display_dead(screenshot_fn, timeout=3.0, interval=0.5, diff=6.0)` | bool | 画面卡死判定(大漠 IsDisplayDead) |
 
 区域找色族(大漠 FindColor/GetColorNum/GetAveRGB/CmpColor 对应物, `region` 同为 `(x1,y1,x2,y2)`):
+找类函数(`find`/`find_all`/`find_color`/`count_color`/`find_by_points`)另有 `exclude=(x1,y1,x2,y2)`
+排除区参数(大漠 SetExcludeRegion 对应物, 壳层 `DmSoft.SetExcludeRegion(type,x1,y1,x2,y2)` 记账): 落区内命中丢弃。
 
 | API | 返回 |
 |---|---|
@@ -172,6 +175,7 @@ same_frame 窗口(防复读旧帧); 停止信号先于命中检查; wait_pic/wai
 | `window.GameWindow.park_offscreen(park: bool)` | 伪后台停靠: 挪到屏外只留 2×30px 缝(**完全离屏会触发 DXGI 节流致截图变暗**) |
 | `window.is_elevated()` / `window.ensure_dpi_aware()` / `window.foreground_window()` | UIPI 同级检查 / DPI 感知(非 100% 缩放时坐标会错) / 当前前台窗口句柄(无则 0) |
 | `capture.capture_client(window) -> BGR ndarray` | 后台截图(PrintWindow); 真最小化自动 SW_RESTORE 重试 |
+| `capture.capture_client_gdi2(window) -> BGR ndarray` | gdi2 第二路(WM_PRINTCLIENT 窗口过程自绘; PrintWindow 全黑/冻结帧目标的救路, 同骨架重试) |
 | `capture.capture_screen(rect=None) -> BGR ndarray` | 前台屏幕截取(微信截图底层); `rect=(x,y,w,h)` 屏幕坐标(可为负原点), None=整个虚拟屏幕; 遮挡即所得 |
 | `capture.virtual_screen_rect() -> (x, y, w, h)` | 多屏虚拟屏幕矩形(原点可为负, 主屏左上恒 0,0) |
 | `input.BaseMouseKeyboard` | 三通道键鼠基类(PostMessage/SendInput/潜影dx 共用): 拟人节奏(轨迹→停顿→按下→延时→抬起/双击/拖拽插值/打字码元)与虚拟光标记账单源; 公开面 `pos`(属性) + click/right_click/middle_click/double_click/drag/wheel/hover/move + left_down…middle_up(裸按钮) + key_tap/key_down/key_up/type_text |
@@ -223,11 +227,14 @@ RGBA(alpha=掩码), `find`/`find_all` 对键控模板只比对非底色笔画 �
 | FindStr | `ocr.find_text` / `find_texts`(字库被 RapidOCR 替代) |
 | MoveTo/LeftClick(后台) | `win32.input.MouseKeyboard`(贝塞尔拟人轨迹) |
 | SendString / SendPaste | `type_text`(WM_CHAR / ADBKeyboard) / `send_paste`; 老 ANSI 窗口打不进字换 `send_ime_string`(WM_IME_CHAR, 大漠 SendString 真身配方) |
-| BindWindow(display,mouse,keypad) | `AdbTarget(serial)`(adb 侧); PC 窗口全词汇 **DmSoft.BindWindow**(gdi/dx/windows/normal/windows2, 详见 dmsoft.py 头注释) |
+| BindWindow(display,mouse,keypad) | `AdbTarget(serial)`(adb 侧); PC 窗口全词汇 **DmSoft.BindWindow**(gdi/gdi2/dx/dx2/dx3/windows/normal/windows2, 详见 dmsoft.py 头注释) |
+| dx.graphic.3d.10plus | dx 注入件 **CMD_HOOK_DXGI**(MinHook 钩 dxgi/d3d11 创建入口截获交换链, Present 捕获后备缓冲; x86+x64 双架构 —— dx 通道首条 64 位图色路; hook_auto 第三顺位, 仅 d3d11 设备命中) |
 | HackSpeed | **DmSoft.HackSpeed**(dx 通道: MinHook inline 钩三钟源本体, 大漠 1:1 复刻; rate=倍率×10, 10=常速, 0=冻结) |
+| dx.public.graphic.revert | **DmSoft.SetGraphicRevert**(dx 通道, 1=取帧不翻正; 治部分窗口截出上下反向) |
 | FindWindow / EnumWindow | `win32.window.GameWindow.find`(类名/标题) / `enum_windows_dm`+`pids_of_process`(大漠 filter 位口径) |
 | SetWindowState | `win32.window.set_window_state`(大漠 0-14 口径: 激活/隐藏/置顶/禁用/强杀…) |
 | LockInput | **DmSoft.LockInput**(BlockInput, 锁定需管理员) |
+| SetExcludeRegion | `vision` 找类函数 `exclude` 参数 / **DmSoft.SetExcludeRegion**(1 开/0 关) |
 
 明确不学: 驱动级键鼠、防护盾 DmGuard、字库、Mem 内存图管理(见 AGENTS.md 红线)。
 潜影 dx 通道(注入件)对应大漠 dx.* 属性族: 后台图色/键鼠/假激活/键态钩/鼠标全家桶,

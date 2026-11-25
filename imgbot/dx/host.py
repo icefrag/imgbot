@@ -19,10 +19,10 @@ import numpy as np
 
 from ..win32.window import WindowLostError
 from .proto import (CMD_BIND, CMD_BYE, CMD_FAKE_ACTIVE, CMD_HIDE, CMD_HOOK_D3D9,
-                    CMD_HOOK_GL, CMD_KEY, CMD_KEYSTATE, CMD_MOUSE, CMD_MOUSE_LOCK,
-                    CMD_MOUSE_PACK, CMD_PING, CMD_RAWINFO, CMD_SPEED, FRAME_OFF,
-                    FIELD_NAMES, HEADER_SIZE, KEY_CHAR, KEY_DOWN, KEY_UP, M_DBLCLK,
-                    M_LDOWN, M_LUP, M_MDOWN, M_MOVE, M_MUP, M_RDOWN, M_RUP,
+                    CMD_HOOK_DXGI, CMD_HOOK_GL, CMD_KEY, CMD_KEYSTATE, CMD_MOUSE,
+                    CMD_MOUSE_LOCK, CMD_MOUSE_PACK, CMD_PING, CMD_RAWINFO, CMD_SPEED,
+                    FRAME_OFF, FIELD_NAMES, HEADER_SIZE, KEY_CHAR, KEY_DOWN, KEY_UP,
+                    M_DBLCLK, M_LDOWN, M_LUP, M_MDOWN, M_MUP, M_RDOWN, M_RUP,
                     M_WHEEL_DOWN, M_WHEEL_UP, OFF, PROTO_VERSION, SHM_MAGIC,
                     SHM_SIZE)
 # 常量再导出: dx.input / 脚本一直 `from .host import M_*` 拿, 导入面不变
@@ -55,6 +55,9 @@ HOOK_ERRORS = {
     145: "页保护失败",
     150: "MinHook 落钩/使能失败(变速齿轮)",
     151: "时间钟源解析失败(变速齿轮)",
+    160: "dxgi.dll 不可得(DXGI 图色)", 161: "d3d11.dll 不可得(DXGI 图色)",
+    162: "MinHook 初始化失败(DXGI)", 163: "创建入口全部解析失败(DXGI)",
+    164: "创建钩全部挂载失败(DXGI)",
 }
 
 k32.CreateFileMappingW.restype = ctypes.c_void_p
@@ -92,6 +95,7 @@ class DxHost:
         self.pid = pid
         self._map = None
         self._view = None
+        self._revert = False          # 帧不翻正(大漠 dx.public.graphic.revert 对应物)
         bits = target_bitness(pid)
         bin_dir = Path(__file__).parent / "bin"
         if getattr(sys, "frozen", False):
@@ -248,6 +252,16 @@ class DxHost:
             raise RuntimeError(f"d3d9 钩子失败 rc={rc}: {HOOK_ERRORS.get(rc, '未知')}")
         return rc
 
+    def hook_dxgi(self) -> int:
+        """DXGI 图色钩子(dx10/11/12, 大漠 dx.graphic.3d.10plus 对应物): MinHook 钩
+        dxgi/d3d11 创建入口截获交换链, Present 捕获后备缓冲。x86+x64 双架构
+        (dx 通道首条 64 位图色路)。约束同 d3d9: 先注入后开游戏。仅 d3d11 设备
+        命中(GetBuffer 的 IID 筛掉 d3d10/d3d12, 面包屑 0x21)。"""
+        rc = self._cmd(CMD_HOOK_DXGI)
+        if rc != 0:
+            raise RuntimeError(f"DXGI 钩子失败 rc={rc}: {HOOK_ERRORS.get(rc, '未知')}")
+        return rc
+
     def hook_keystate(self) -> int:
         """键态钩子: user32!GetKeyState/GetAsyncKeyState 改读虚拟状态(大漠键盘死案
         解法 —— 轮询型输入游戏收不到合成消息, 钩子喂虚拟按住态)。仅 x86。"""
@@ -275,16 +289,28 @@ class DxHost:
         return self._cmd(CMD_MOUSE_PACK, 1 if enable else 0)
 
     def hook_auto(self) -> str:
-        """按目标已加载的图形栈自动选钩子, 返回 'gl' / 'd3d9'; 失败抛 RuntimeError。"""
+        """按目标已加载的图形栈自动选钩子: GL → d3d9 → DXGI, 首个成功即用。
+        降级语义: 每路的"目标不匹配/此架构挂不上"码(20 未加载 opengl32, 31 无
+        热补丁哨兵[x64], 60/62/63/64 d3d9 同理)落到下一路; 其余失败码立即抛。
+        x64 GL/d3d9 游戏会连降两级落 DXGI(不可能命中时汇总各路 rc 抛 RuntimeError)。"""
+        errors = []
         rc = self._cmd(CMD_HOOK_GL)
         if rc == 0:
             return "gl"
-        if rc != 20:                                  # 20=没有 opengl32 才值得试 d3d9
+        if rc not in (20, 31):
             raise RuntimeError(f"GL 钩子失败 rc={rc}: {HOOK_ERRORS.get(rc, '未知')}")
+        errors.append(f"gl rc={rc}({HOOK_ERRORS.get(rc, '未知')})")
         rc9 = self._cmd(CMD_HOOK_D3D9)
-        if rc9 != 0:
+        if rc9 == 0:
+            return "d3d9"
+        if rc9 not in (60, 62, 63, 64):
             raise RuntimeError(f"d3d9 钩子失败 rc={rc9}: {HOOK_ERRORS.get(rc9, '未知')}")
-        return "d3d9"
+        errors.append(f"d3d9 rc={rc9}({HOOK_ERRORS.get(rc9, '未知')})")
+        rcg = self._cmd(CMD_HOOK_DXGI)
+        if rcg == 0:
+            return "dxgi"
+        errors.append(f"dxgi rc={rcg}({HOOK_ERRORS.get(rcg, '未知')})")
+        raise RuntimeError("三路图色钩全部不可用: " + "; ".join(errors))
 
     def bind_input(self, hwnd: int) -> None:
         """键鼠命令的目标窗口(CMD_BIND); 失败(窗口无效)抛 RuntimeError。"""
@@ -405,7 +431,8 @@ class DxHost:
         for _ in range(3):                          # 拷后复核 seq, 防单槽撕裂
             buf = (ctypes.c_char * (w * h * n)).from_address(self._view + FRAME_OFF)
             img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, n)
-            img = img[::-1]                                   # GL 行序自底向上, 翻正
+            if not self._revert:                              # GL 行序自底向上, 翻正;
+                img = img[::-1]                # set_revert(True) 跳过(反向窗口救路)
             img = img[:, :, :3]
             if fmt == 2:                                      # GL_RGB: 通道序反成 BGR
                 img = img[:, :, ::-1]
@@ -415,6 +442,12 @@ class DxHost:
             seq, w, h, fmt = self.frame_info()                # 有新帧, 按新头重拷
             n = 4 if fmt == 1 else 3
         return img                                             # 高刷下三次未稳, 取最后拷贝
+
+    def set_revert(self, enable: bool = True) -> None:
+        """帧上下反转开关(大漠 dx.public.graphic.revert 对应物, 工单
+        damo-bg-capture/03): 有些 GL 窗口截出来上下反向, 开启后跳过宿主侧翻正。
+        宿主后处理实现(帧捕获侧不动 C)。"""
+        self._revert = bool(enable)
 
     # -- 内部 ----------------------------------------------------------
     def _wait(self, cond, timeout: float, what: str):

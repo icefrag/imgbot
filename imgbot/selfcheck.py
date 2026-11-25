@@ -37,7 +37,7 @@ from .ocr import best_match
 from .ops import FrameSource, Ops
 from .readout import enlarge, read_digits
 from .target import AdbTarget
-from .win32.capture import capture_client, capture_screen, virtual_screen_rect
+from .win32.capture import capture_client, capture_client_gdi2, capture_screen, virtual_screen_rect
 from .win32.input import (CF_UNICODETEXT, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
                           WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_PASTE,
                           MouseKeyboard, human_path, send_ime_string, send_paste)
@@ -129,13 +129,23 @@ def create_visible_window(width, height, bg_rgb):
 
     @WNDPROC
     def wndproc(hwnd, msg, wp, lp):
+        if msg == 0x0318:  # WM_PRINTCLIENT(gdi2 截图路靶): 自绘客户区 —— GDI 应用标准行为
+            rc = wt.RECT()
+            _user32.GetClientRect(hwnd, ctypes.byref(rc))
+            _user32.FillRect(wt.HDC(wp), ctypes.byref(rc), wc.hbrBackground)
+            return 1
         return _user32.DefWindowProcW(hwnd, msg, wp, lp)
 
     create_visible_window._keep = wndproc     # 防 WNDPROC 回调被 GC 后窗口崩溃
     hinst, wc = _register_class("ImgbotVis%d" % seq, wndproc, brush)
+    # 外框尺寸用 AdjustWindowRectEx 按真实非客户区反推(固定 +16/+39 只在 100% DPI
+    # 成立; dpi 感知进程在 200% 屏上 NC 区按 DPI 缩放, 客户区会偏离断言值)
+    _rc = wt.RECT(0, 0, width, height)
+    _user32.AdjustWindowRectEx(ctypes.byref(_rc), 0x10CF0000, False, 0)  # WS_OVERLAPPEDWINDOW
     hwnd = _user32.CreateWindowExW(
-        0, wc.lpszClassName, "imgbot-selfcheck", 0x10CF0000,  # WS_OVERLAPPEDWINDOW
-        100, 100, width + 16, height + 39, None, None, ctypes.c_void_p(hinst), None)
+        0, wc.lpszClassName, "imgbot-selfcheck", 0x10CF0000,
+        100, 100, _rc.right - _rc.left, _rc.bottom - _rc.top,
+        None, None, ctypes.c_void_p(hinst), None)
     _user32.ShowWindow(hwnd, 1)
     _user32.UpdateWindow(hwnd)
 
@@ -342,6 +352,23 @@ def check_vision():
     assert vision.cmp_color(reg, 55, 15, [(0, 0, 0), (200, 10, 10)])  # 列表任一命中
     b, g, r = vision.ave_color(reg, (50, 10, 60, 20))
     assert abs(b - 200) < 2 and abs(g - 10) < 2 and abs(r - 10) < 2, (b, g, r)
+
+    # ---- exclude 排除区(大漠 SetExcludeRegion 对应物, 工单 damo-bg-capture/06) ----
+    assert vision.find(screen, tpl, exclude=(350, 110, 380, 140)) is None   # 命中点落区内
+    assert vision.find(screen, tpl, exclude=(0, 0, 100, 100)) is not None   # 区外无碍
+    assert [h[0] for h in vision.find_all(row, icon, 0.99,
+                                          exclude=(100, 0, 200, 200))] == [58, 258]
+    assert vision.find_color(reg, (10, 200, 10), tol=5,
+                             exclude=(115, 25, 131, 38)) == []              # 3x6 块全区内
+    n_all = vision.count_color(reg, (10, 200, 10), tol=5)
+    n_left = vision.count_color(reg, (10, 200, 10), tol=5, exclude=(118, 29, 124, 33))
+    assert 0 < n_left < n_all, (n_all, n_left)
+    assert vision.find_by_points(tri, (0, 0, 300, 300), tri_pts,
+                                 exclude=(115, 102, 140, 120)) is None      # 伴点落区=无效(唯一候选被否决)
+    assert vision.find_by_points(tri, (0, 0, 960, 540), tri_pts,
+                                 exclude=(100, 90, 140, 110)) == (500, 100)  # 锚落区丢弃, 递补下一候选
+    assert vision.find_by_points(tri, (0, 0, 960, 540), tri_pts,
+                                 exclude=(400, 400, 500, 500)) == (120, 100)  # 区外无碍
 
     # ---- 卡死判定 ----
     assert vision.is_display_dead(lambda: screen.copy(), timeout=0.7, interval=0.2) is True
@@ -876,6 +903,23 @@ def check_win32_capture():
     finally:
         cleanup()
 
+    # ---- win32: gdi2 第二截图路(WM_PRINT, 工单 damo-bg-capture/04; 同窗对照) ----
+    vh2, cleanup2 = create_visible_window(200, 100, (30, 200, 90))
+    try:
+        time.sleep(0.3)
+        img2 = None
+        for _ in range(3):
+            img2 = capture_client_gdi2(GameWindow(vh2))
+            if int(img2.max()) > 0:
+                break
+            time.sleep(0.25)
+        assert img2 is not None and img2.shape[:2] == (100, 200), img2.shape if img2 is not None else None
+        assert int(img2.max()) > 0, "gdi2 WM_PRINT 路全黑: 窗口过程未自绘"
+        b2, g2, r2 = img2[50, 100]
+        assert abs(int(b2) - 90) <= 6 and abs(int(g2) - 200) <= 6 and abs(int(r2) - 30) <= 6, (b2, g2, r2)
+    finally:
+        cleanup2()
+
     # ---- win32: 屏幕截取(前台 BitBlt, 与 PrintWindow 后台互补; 用纯色窗口验色) ----
     # 依赖"该窗口当前可见": 桌面随便开个窗口盖住它就会拍到别的东西 —— 先提 TOPMOST 再拍
     _user32.SetWindowPos.restype = wt.BOOL
@@ -931,11 +975,44 @@ def check_win32_window():
         gw = GameWindow(vh2)
         assert gw.is_pseudo_minimized is False
         gw.park_offscreen(True)
-        assert gw.is_pseudo_minimized is True, "停靠后应报告伪最小化"
+        assert gw.is_pseudo_minimized is True
         gw.park_offscreen(False)
         assert gw.is_pseudo_minimized is False
     finally:
         cleanup2()
+
+    # ---- dx2/dx3 无注入路(工单 damo-bg-capture/02): 绑定即停靠, 图色 PrintWindow,
+    # unbind 还原原位; dx 键鼠通道在此词汇下必须拒绝 ----
+    vh6, cleanup6 = create_visible_window(200, 100, (30, 200, 90))
+    try:
+        time.sleep(0.3)
+        prev_rect = GameWindow(vh6).window_rect()
+        dm2 = DmSoft()
+        assert dm2.BindWindow(vh6, "dx2", "windows", "windows", 0) == 1
+        parked_rect = GameWindow(vh6).window_rect()
+        assert parked_rect[0] > prev_rect[0], "dx2 绑定应把窗口停靠到屏外细缝"
+        w6, h6 = GameWindow(vh6).client_rect()[2:]   # 客户区实际尺寸(200% DPI 下非 200x100)
+        img6 = None
+        for _ in range(3):
+            img6 = dm2.screen()
+            if int(img6.max()) > 0:
+                break
+            time.sleep(0.25)
+        assert img6 is not None and img6.shape[:2] == (h6, w6), \
+            f"dx2 图色应取到 PrintWindow 帧: img={None if img6 is None else img6.shape} client={(w6, h6)}"
+        assert int(img6.max()) > 0, "dx2 图色全黑"
+        b6, g6, r6 = img6[h6 // 2, w6 // 2]
+        assert abs(int(b6) - 90) <= 6 and abs(int(g6) - 200) <= 6 and abs(int(r6) - 30) <= 6, (b6, g6, r6)
+        dm3 = DmSoft()
+        try:
+            dm3.BindWindow(vh6, "dx3", "dx", "windows", 0)
+            raise AssertionError("dx3 + dx 键鼠应拒绝(无注入路)")
+        except NotImplementedError:
+            pass
+        assert dm2.UnBindWindow() == 1
+        assert GameWindow(vh6).window_rect()[:2] == prev_rect[:2], "解绑应还原窗口原位"
+    finally:
+        cleanup6()
 
     # ---- win32: 大漠窗口族(SetWindowState 0-14 口径 + EnumWindow 过滤位) ----
     dmw = DmSoft()

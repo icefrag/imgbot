@@ -10,8 +10,10 @@
     dm.UnBindWindow()
 
 通道词汇 = 大漠模式字符串(全表 docs/ref/damo-BindWindow*.txt):
-- display: "normal"(前台) / "gdi"/"gdi2"(PrintWindow 族) / "dx"*("dx","dx2",
-  "dx.graphic.2d/3d/opengl" → 注入件; GL 已通, d3d9 在调试 → 明确报错)
+- display: "normal"(前台) / "gdi"(PrintWindow) / "gdi2"(WM_PRINTCLIENT 救路) /
+  "dx2"/"dx3"(无注入: 停靠屏外细缝+PrintWindow, 杀软拦注入件备胎) /
+  "dx"*("dx","dx.graphic.2d/3d/opengl" → 注入件; GL/d3d9(x86 hotpatch)/
+  dx10-12(x86+x64 MinHook DXGI)全通 —— hook_auto 自动选路 GL→d3d9→DXGI)
 - mouse/keypad: "windows"* → PostMessage; "windows2"* → 潜影 dx 消息鼠标 +
   GetCursorPos 虚拟光标锁(大漠 windows2 缩写语义); "dx"* → 注入件全家桶
   (消息配方 + 键态/光标锁/GetCapture 虚拟化/GetCursorInfo/ClipCursor/取消息层
@@ -29,7 +31,7 @@ import cv2
 import numpy as np
 
 from . import vision
-from .win32.capture import capture_client, capture_screen
+from .win32.capture import capture_client, capture_client_gdi2, capture_screen
 from .win32.input import MouseKeyboard
 from .win32.window import GameWindow, ensure_dpi_aware
 
@@ -56,6 +58,8 @@ class DmSoft:
         self._display = None
         self._last_error = 0
         self._input_locked = False
+        self._exclude: tuple[int, int, int, int] | None = None   # SetExcludeRegion 记账
+        self._parked = False                       # dx2/dx3 停靠态(unbind 还原窗口位)
 
     # ================= 后台设置: 绑定族(8) =================
     def BindWindow(self, hwnd: int, display: str, mouse: str, keypad: str,
@@ -65,8 +69,18 @@ class DmSoft:
             self._win = GameWindow(hwnd)
             ensure_dpi_aware()
             self._display = display
-            if display in ("gdi", "gdi2"):
-                pass                                   # PrintWindow 按需现截
+            if display in ("dx2", "dx3"):
+                # dx2/dx3 原语义(工单 damo-bg-capture/02): 无注入路 —— 窗口停靠
+                # 到屏外仅留 2×30px 细缝(防 DXGI 遮挡节流, park_offscreen 既有
+                # 经验; 大漠官方"保证窗口有一部分在屏幕外"), 图色走 PrintWindow
+                # 读 DWM 重定向表面。杀软拦注入件时的备胎。键鼠只支持无注入通道。
+                if mouse.startswith("dx") or keypad.startswith("dx"):
+                    raise NotImplementedError(
+                        "dx2/dx3 为无注入路, 键鼠请用 windows/windows2/normal")
+                self._win.park_offscreen(True)
+                self._parked = True
+            elif display in ("gdi", "gdi2"):
+                pass                       # gdi=PrintWindow 现截; gdi2=WM_PRINT 救路(screen 按 _display 分)
             elif display == "normal":
                 pass                                   # 前台全屏, 按需现截
             elif display.startswith("dx"):
@@ -122,7 +136,10 @@ class DmSoft:
             raise RuntimeError(f"BindWindow 失败: {e}") from e
 
     def UnBindWindow(self) -> int:
-        """解绑并释放资源(大漠: 脚本退出时调用)。"""
+        """解绑并释放资源(大漠: 脚本退出时调用)。dx2/dx3 停靠的窗口先还原位置。"""
+        if self._parked and self._win is not None:
+            self._win.park_offscreen(False)        # 挪回原位(dx2/dx3 无注入路)
+            self._parked = False
         if self._dx is not None:
             self._dx.unbind()
         self._win = self._mk = self._dx = self._dxmk = None
@@ -141,12 +158,17 @@ class DmSoft:
         return 1 if self._win and self._win.hwnd == hwnd else 0
 
     def SwitchBindWindow(self, hwnd: int) -> int:
-        """不解绑切换同进程窗口。"""
+        """不解绑切换同进程窗口。dx2/dx3 停靠态随切换迁移(旧窗还原新窗停靠)。"""
         if not self._win:
             return 0
         if self._win.pid() != GameWindow(hwnd).pid():
             raise RuntimeError("SwitchBindWindow 要求同进程窗口(大漠同款限制)")
-        self._win = GameWindow(hwnd)
+        if self._parked:
+            self._win.park_offscreen(False)
+            self._win = GameWindow(hwnd)
+            self._win.park_offscreen(True)
+        else:
+            self._win = GameWindow(hwnd)
         if self._dxmk is not None:
             self._dx.bind_input(hwnd)
             self._dxmk = type(self._dxmk)(self._dx, hwnd)
@@ -160,6 +182,14 @@ class DmSoft:
         """后台假激活(dx 通道)。"""
         self._need_dx()
         self._dx.fake_active(bool(enable))
+        return 1
+
+    def SetGraphicRevert(self, enable: int) -> int:
+        """帧上下反转(大漠 dx.public.graphic.revert 公共参数对应物, 工单
+        damo-bg-capture/03): 部分窗口截出来上下反向(GL/D3D/DXGI 帧路都可能),
+        enable=1 后取帧跳过翻正。需要 dx 通道(注入件图色)。返回 1。"""
+        self._need_dx()
+        self._dx.set_revert(bool(enable))
         return 1
 
     def LockInput(self, lock: int) -> int:
@@ -243,6 +273,16 @@ class DmSoft:
     def LockMouseRect(self, x1: int, y1: int, x2: int, y2: int) -> int:
         raise NotImplementedError("LockMouseRect(前台)未实现")
 
+    def SetExcludeRegion(self, type_: int, x1: int, y1: int, x2: int, y2: int) -> int:
+        """设置排除区域(大漠 SetExcludeRegion 口径: type 1=开启 0=关闭):
+        之后找类函数(FindPic/FindColor 族/FindMultiColor/GetColorNum)在区域内无效
+        —— 屏蔽自绘光标/固定特效干扰区。对象级状态, UnBind 不清(大漠同义)。"""
+        if type_:
+            self._exclude = (x1, y1, x2, y2)
+        else:
+            self._exclude = None
+        return 1
+
     # ================= 图色 =================
     def screen(self) -> np.ndarray:
         """取一帧(客户区坐标 BGR)—— Ops 帧源 seam(FrameSource)的实现。"""
@@ -254,8 +294,14 @@ class DmSoft:
             return img[ry:ry + h_, rx:rx + w_]
         if self._display is None:
             raise RuntimeError("未 BindWindow")
+        if self._display in ("dx2", "dx3"):
+            # 停靠屏外的窗口: PrintWindow 读 DWM 重定向表面(无注入, dx2 原语义)
+            return capture_client(self._win)
         if self._display.startswith("dx"):
             return self._dx.capture()
+        if self._display == "gdi2":
+            # gdi2 原语义(工单 damo-bg-capture/04): WM_PRINT 救路, 不是 gdi 别名
+            return capture_client_gdi2(self._win)
         return capture_client(self._win)
 
     def Capture(self, x1, y1, x2, y2, file, *_):
@@ -303,7 +349,7 @@ class DmSoft:
     def _find_colors(self, x1, y1, x2, y2, color, sim):
         cols, tol = _bgr(color)
         return vision.find_color(self.screen(), [cols], tol=tol + round((1 - sim) * 32),
-                                 region=(x1, y1, x2, y2))
+                                 region=(x1, y1, x2, y2), exclude=self._exclude)
 
     def FindPic(self, x1, y1, x2, y2, pic_name, delta_color="000000", sim=0.9,
                 dir=0, *_):
@@ -315,7 +361,7 @@ class DmSoft:
         for idx, name in enumerate(names):
             tpl = vision.load(name)
             hit = vision.find(screen, tpl, threshold=sim,
-                              region=(x1, y1, x2, y2))
+                              region=(x1, y1, x2, y2), exclude=self._exclude)
             if hit:  # 中心 → 左上角(大漠 FindPic 语义)
                 return idx, hit[0] - tpl.shape[1] // 2, hit[1] - tpl.shape[0] // 2
         return -1, -1, -1
@@ -335,14 +381,15 @@ class DmSoft:
             dx_, dy_, col = item.split("|")
             (b, g, r), t = _bgr(col)
             pts.append(Pt(int(dx_), int(dy_), (b, g, r), t + round((1 - sim) * 32)))
-        hit = vision.find_by_points(self.screen(), (x1, y1, x2, y2), pts)
+        hit = vision.find_by_points(self.screen(), (x1, y1, x2, y2), pts,
+                                    exclude=self._exclude)
         return (hit[0], hit[1]) if hit else (-1, -1)
 
     def GetColorNum(self, x1, y1, x2, y2, color, sim=1.0) -> int:
         cols, tol = _bgr(color)
         return vision.count_color(self.screen(), [cols],
                                   tol=tol + round((1 - sim) * 32),
-                                  region=(x1, y1, x2, y2))
+                                  region=(x1, y1, x2, y2), exclude=self._exclude)
 
     def IsDisplayDead(self, x1, y1, x2, y2, t=2) -> int:
         """区域 t 秒画面不变返回 1(卡屏检测; 区域裁剪后比对, 全屏死=区域死)。"""

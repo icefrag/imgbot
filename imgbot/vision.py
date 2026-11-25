@@ -169,14 +169,26 @@ def _crop(screen_bgr: np.ndarray, region: tuple[int, int, int, int]):
     return screen_bgr[y1:y2, x1:x2], x1, y1
 
 
+def _in_excl(x: int, y: int, exclude: tuple[int, int, int, int] | None) -> bool:
+    """点是否落在排除区 exclude=(x1,y1,x2,y2)(大漠 SetExcludeRegion 语义:
+    找类函数在该区域内无效 —— 坐标过滤, 不改匹配本体)."""
+    if exclude is None:
+        return False
+    x1, y1, x2, y2 = exclude
+    return x1 <= x < x2 and y1 <= y < y2
+
+
 def find(screen_bgr: np.ndarray, tpl: np.ndarray,
          threshold: float = DEFAULT_THRESHOLD,
-         region: tuple[int, int, int, int] | None = None) -> tuple[int, int, float] | None:
+         region: tuple[int, int, int, int] | None = None,
+         exclude: tuple[int, int, int, int] | None = None) -> tuple[int, int, float] | None:
     """单目标模板匹配, 返回(中心x, 中心y, 分数); 低于阈值返回 None.
 
     零方差防虚高(LZG_PMH 移植): 纯色模板/纯色命中区上的相关系数无意义, 一律判未命中.
     region=(x1,y1,x2,y2) 只在矩形内搜, 返回**全屏**坐标(与 find_color 族同口径);
     None=全屏. 位置固定的元素必须限矩形(全屏搜关闭X曾在世界翅膀上得0.94误报).
+    exclude=(x1,y1,x2,y2) 排除区(大漠 SetExcludeRegion 对应物): 命中点落在
+    其中即视为未命中(屏蔽自绘光标/固定特效干扰区).
     """
     sub, ox, oy = (screen_bgr, 0, 0) if region is None else _crop(screen_bgr, region)
     m = _match(sub, tpl)
@@ -187,7 +199,10 @@ def find(screen_bgr: np.ndarray, tpl: np.ndarray,
         return None
     if _flat_hit(m.gray, loc[0], loc[1], m.h, m.w):
         return None
-    return ox + loc[0] + m.w // 2, oy + loc[1] + m.h // 2, score
+    cx, cy = ox + loc[0] + m.w // 2, oy + loc[1] + m.h // 2
+    if _in_excl(cx, cy, exclude):
+        return None
+    return cx, cy, score
 
 
 def find_any(screen_bgr: np.ndarray, names: list[str],
@@ -225,7 +240,8 @@ def _tol3(tol) -> np.ndarray:
 
 
 def find_by_points(screen_bgr: np.ndarray, rect: tuple[int, int, int, int],
-                   points: list[Pt], direction: int = 0) -> tuple[int, int] | None:
+                   points: list[Pt], direction: int = 0,
+                   exclude: tuple[int, int, int, int] | None = None) -> tuple[int, int] | None:
     """矩形区域内多点找色: 元素本体带动画特效、模板匹配不稳时的替代方案(按键精灵/大漠同款思路).
 
     rect=(x1,y1,x2,y2) 搜索范围, 尽量小别全屏; points 为 Pt 列表, 第一个点是锚点(通常
@@ -234,6 +250,8 @@ def find_by_points(screen_bgr: np.ndarray, rect: tuple[int, int, int, int],
     全部点命中才返回锚点全屏坐标, 无达标候选返回 None. direction: 多个达标候选时返回哪个 —
     0 左上起(默认) 1 左下起 2 右上起 3 右下起. 选点避开参与动画的区域(光效/高光),
     动画相位色进 alts.
+    exclude=(x1,y1,x2,y2) 排除区(大漠 SetExcludeRegion 对应物): 锚点落其中丢弃;
+    伴点像素落其中视为无效(不作任何判据, anti 也不反成命中).
     """
     if not points:
         return None
@@ -257,11 +275,13 @@ def find_by_points(screen_bgr: np.ndarray, rect: tuple[int, int, int, int],
     n = len(prepped)
     for y, x in cands:
         ax, ay = x - adx, y - ady  # 反推锚点位置(锚点自身也可带偏移)
+        if _in_excl(x1 + ax, y1 + ay, exclude):
+            continue
         hits = 0
         for dx, dy, variants, tol3, anti in prepped:
             px, py = ax + dx, ay + dy
             ok = False
-            if 0 <= px < w and 0 <= py < h:
+            if 0 <= px < w and 0 <= py < h and not _in_excl(x1 + px, y1 + py, exclude):
                 ok = any((np.abs(sub[py, px] - c) <= tol3).all() for c in variants)
                 if anti:
                     ok = not ok
@@ -273,10 +293,12 @@ def find_by_points(screen_bgr: np.ndarray, rect: tuple[int, int, int, int],
 
 
 def find_all(screen_bgr: np.ndarray, tpl: np.ndarray, threshold: float = DEFAULT_THRESHOLD,
-             min_dist: int = 12) -> list[tuple[int, int, float]]:
+             min_dist: int = 12,
+             exclude: tuple[int, int, int, int] | None = None) -> list[tuple[int, int, float]]:
     """多目标模板匹配: 返回所有 ≥threshold 的命中(中心x,中心y,分数), 按 x 排序, 近邻去重.
 
     用于数个数类的场景(如任务星级的一排金星), 单目标用 find.
+    exclude=(x1,y1,x2,y2) 排除区(大漠 SetExcludeRegion 对应物): 命中点落在其中丢弃.
     """
     m = _match(screen_bgr, tpl)
     if m is None:
@@ -289,7 +311,9 @@ def find_all(screen_bgr: np.ndarray, tpl: np.ndarray, threshold: float = DEFAULT
         if score < threshold:
             break
         if not _flat_hit(m.gray, loc[0], loc[1], m.h, m.w):
-            hits.append((loc[0] + m.w // 2, loc[1] + m.h // 2, round(score, 3)))
+            cx, cy = loc[0] + m.w // 2, loc[1] + m.h // 2
+            if not _in_excl(cx, cy, exclude):
+                hits.append((cx, cy, round(score, 3)))
         x0, x1 = max(0, loc[0] - min_dist), loc[0] + min_dist
         y0, y1 = max(0, loc[1] - min_dist), loc[1] + min_dist
         result[y0:y1, x0:x1] = -1.0
@@ -353,18 +377,28 @@ def _region(screen_bgr: np.ndarray, region=None) -> tuple[np.ndarray, tuple[int,
     return screen_bgr[y1:y2, x1:x2].astype(int), (x1, y1)
 
 
-def find_color(screen_bgr: np.ndarray, colors, tol=10, region=None) -> list[tuple[int, int]]:
+def find_color(screen_bgr: np.ndarray, colors, tol=10, region=None,
+               exclude: tuple[int, int, int, int] | None = None) -> list[tuple[int, int]]:
     """区域内找色, 返回全部命中坐标 [(x, y), ...]. colors 单色或色列表(任一命中即算).
-    region=(x1,y1,x2,y2), None=全屏. 大色场慎用(返回点可能巨多), 点数用 count_color."""
+    region=(x1,y1,x2,y2), None=全屏. 大色场慎用(返回点可能巨多), 点数用 count_color.
+    exclude=(x1,y1,x2,y2) 排除区(大漠 SetExcludeRegion 对应物): 落其中坐标丢弃."""
     sub, (x1, y1) = _region(screen_bgr, region)
     ys, xs = np.nonzero(_color_mask(sub, colors, tol))
-    return [(int(x) + x1, int(y) + y1) for y, x in zip(ys, xs)]
+    return [(int(x) + x1, int(y) + y1) for y, x in zip(ys, xs)
+            if not _in_excl(int(x) + x1, int(y) + y1, exclude)]
 
 
-def count_color(screen_bgr: np.ndarray, colors, tol=10, region=None) -> int:
-    """区域内命中色像素计数: 「亮像素轮询判定」类逻辑的原语(某图标出现→亮像素数上台阶)."""
-    sub, _ = _region(screen_bgr, region)
-    return int(_color_mask(sub, colors, tol).sum())
+def count_color(screen_bgr: np.ndarray, colors, tol=10, region=None,
+                exclude: tuple[int, int, int, int] | None = None) -> int:
+    """区域内命中色像素计数: 「亮像素轮询判定」类逻辑的原语(某图标出现→亮像素数上台阶).
+    exclude=(x1,y1,x2,y2) 排除区(大漠 SetExcludeRegion 对应物): 区内像素不计."""
+    sub, (rx, ry) = _region(screen_bgr, region)
+    mask = _color_mask(sub, colors, tol)
+    if exclude is not None:
+        ex1, ey1, ex2, ey2 = exclude
+        mask[max(0, ey1 - ry):max(0, ey2 - ry),
+             max(0, ex1 - rx):max(0, ex2 - rx)] = False
+    return int(mask.sum())
 
 
 def color_at(screen_bgr: np.ndarray, x: int, y: int) -> tuple[int, int, int]:

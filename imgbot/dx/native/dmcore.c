@@ -22,6 +22,10 @@
  * 协议/布局见 host.py 头注释, 两端必须同步改。
  */
 #include <windows.h>
+#include <stddef.h>            /* offsetof(DXGI 图色段 vtable 槽位编译期推导) */
+#include <dxgi.h>
+#include <dxgi1_2.h>           /* IDXGIFactory2(CreateSwapChainForHwnd 槽位/IID) */
+#include <d3d11.h>             /* DXGI 图色段的设备/上下文 vtable(槽位 offsetof 推导) */
 #include "obfstrings.gen.h"   /* 构建期生成(build.py): 遮蔽串密文+obf_init 解码 */
 #include "proto.gen.h"        /* 构建期生成(build.py): 命令码/头布局, 单源 imgbot/dx/proto.py */
 #include <MinHook.h>           /* inline hook 引擎(变速齿轮用, 大漠内置同款的开源等价物, vendored minhook/) */
@@ -746,6 +750,336 @@ static void unhook_d3d9(void)
     }
 }
 
+/* ---- DXGI 图色钩(CMD_HOOK_DXGI, 大漠 dx.graphic.3d.10plus 对应物, 工单
+ * ---- damo-bg-capture/01): dx10/11/12 走 DXGI 交换链。与大漠不同的关键:
+ * ---- 本段 MinHook(x86+x64 双架构)是 dx 通道**第一条 64 位图色路** —— GL/d3d9
+ * ---- 的自制 hotpatch 是 x86-only 哨兵路, x64 目标必 31。 ----
+ * 挂法(变速齿轮同引擎): 钩创建入口截获交换链, 与 d3d9 的 CreateDevice 补槽同构:
+ *   dxgi.dll!CreateDXGIFactory/1/2 → 截获 factory → 补 IDXGIFactory 的
+ *   CreateSwapChain(槽 10, 各层级基座)与 IDXGIFactory2 的 CreateSwapChainForHwnd/
+ *   ForCoreWindow(flip-model 现代游戏主路)→ 截获 swap → 补 IDXGISwapChain::Present
+ *   d3d11.dll!D3D11CreateDeviceAndSwapChain → 出参直截获 swap
+ * 捕获(GetBuffer 的 IID 即筛子): IID_ID3D11Texture2D 只有 d3d11 设备认 —— d3d10/
+ * d3d12 在此天然 E_NOINTERFACE, 面包屑 0x21 照转发不崩(分刀: 本刀只做 d3d11)。
+ *   GetBuffer→ID3D11Texture2D → GetDevice→GetImmediateContext → CreateTexture2D
+ *   (STAGING+CPU_READ, 按尺寸缓存)→ CopyResource → Map(READ) → 倒序拷 SHM(BGRA)。
+ * vtable 槽位全部 offsetof 对 mingw 头编译期推导(背表必错: 实测 CopyResource=47
+ * GetDesc=10, 与直觉差远); x86/x64 COM 槽序同构, 已双架构探针验证。
+ * 约束: 先注入后开游戏(在世 swap 抓不到, 大漠 d3d9 同约束)。
+ * 转发真尾跳(musttail, d3d9 Present 同案); 解绑不摘钩(detached 闸纯转发, 变速
+ * 齿轮同哲学 —— 钩随 DLL 常驻)。 ---- */
+#define VT_SLOT(Type, Name) (offsetof(Type##Vtbl, Name) / sizeof(void *))
+
+static HRESULT WINAPI our_dxgi_present(void *sc, UINT sync, UINT flags);
+static HRESULT WINAPI our_factory_create_swap_chain(void *self, void *device,
+                                                    void *desc, void **swap);
+static HRESULT WINAPI our_factory_for_hwnd(void *self, void *device, HWND hwnd,
+                                           const void *desc1, const void *fsdesc,
+                                           void *restrict_out, void **swap);
+static HRESULT WINAPI our_factory_for_core_window(void *self, void *device, void *window,
+                                                  const void *desc1, const void *fsdesc,
+                                                  void **swap);
+static void dxgi_hook_swapchain(void *sc);
+static void dxgi_hook_factory(void *factory);
+
+typedef HRESULT (WINAPI *FnDxgiPresent)(void *, UINT, UINT);
+
+/* IID 官方值(本机 Windows SDK 10.0.26100 d3d11.h DEFINE_GUID 一字不差抄录;
+ * 与 mingw dxguid/头一致)。之前编造的 "2f8420f9-..." 是错的 —— 官方
+ * IID_ID3D11Texture2D = 6f15aaf2-d208-4e89-9ab4-489535d34f9c, 尾字节 0x9c,
+ * 差一位 E_NOINTERFACE(实机 QI 裁决, qi 探针)。 */
+static const IID IID_TEX2D_OFFICIAL =
+    {0x6f15aaf2, 0xd208, 0x4e89, {0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c}};
+static const IID IID_FACTORY2_OFFICIAL =
+    {0x50c83a1c, 0xe072, 0x4362, {0x9d, 0x72, 0x92, 0xce, 0x56, 0xb7, 0xe4, 0x9b}};
+static const IID IID_DEV11_OFFICIAL =
+    {0xdb6f6ddb, 0xac77, 0x4e88, {0x82, 0x53, 0x81, 0x9d, 0xf9, 0xbb, 0xf1, 0x40}};
+
+static FnDxgiPresent g_realDxgiPresent[3];       /* 原始 Present(按 swap vtable 代数) */
+static void     *g_dxgiSwapVt[3];                /* swap vtable(还原记账) */
+static int       g_nDxgiSwapVt;
+static HRESULT (WINAPI *g_realFactoryCreateSwapChain)(void *, void *, void *, void **);
+static HRESULT (WINAPI *g_realFactoryForHwnd)(void *, void *, HWND, const void *,
+                                              const void *, void *, void **);
+static HRESULT (WINAPI *g_realFactoryForCoreWindow)(void *, void *, void *, const void *,
+                                                    const void *, void **);
+static HRESULT (WINAPI *g_realD3D11CreateDASC)(void *, UINT, HMODULE, UINT, const void *,
+                                               UINT, UINT, const void *, void **, void **,
+                                               UINT *, void **);
+static HRESULT (WINAPI *g_realFactoryCrt)(const IID *, void **);
+static HRESULT (WINAPI *g_realFactoryCrt1)(const IID *, void **);
+static HRESULT (WINAPI *g_realFactoryCrt2)(UINT, const IID *, void **);
+static HMODULE g_d3d11Mod;                       /* d3d11.dll(先代载, 供 GetProcAddress) */
+
+/* CreateDXGIFactory/1/2 三兄弟同形转发(2 多一个 Flags 首参) */
+static HRESULT WINAPI our_factory_dxgi_crt(const IID *riid, void **out)
+{
+    HRESULT hr = g_realFactoryCrt(riid, out);
+    if (hr >= 0 && out && *out) dxgi_hook_factory(*out);
+    return hr;
+}
+
+static HRESULT WINAPI our_factory_dxgi_crt1(const IID *riid, void **out)
+{
+    HRESULT hr = g_realFactoryCrt1(riid, out);
+    if (hr >= 0 && out && *out) dxgi_hook_factory(*out);
+    return hr;
+}
+
+static HRESULT WINAPI our_factory_dxgi_crt2(UINT flags, const IID *riid, void **out)
+{
+    HRESULT hr = g_realFactoryCrt2(flags, riid, out);
+    if (hr >= 0 && out && *out) dxgi_hook_factory(*out);
+    return hr;
+}
+static void *g_dxgiStaging;                      /* CPU 读面(按尺寸缓存) */
+static UINT   g_dxgiW, g_dxgiH;
+
+/* Present 捕获体: GetBuffer 的 IID_ID3D11Texture2D 就是设备代筛(d3d10/d3d12 在此
+ * E_NOINTERFACE → 面包屑 0x21 照转发, 本刀只做 d3d11)。 */
+static HRESULT WINAPI our_dxgi_present(void *sc, UINT sync, UINT flags)
+{
+    LONG detached = g_detached;
+    void *tex = NULL, *unk = NULL, *dev = NULL, *ctx = NULL;
+    HRESULT hr;
+    void **vt = *(void ***)sc;
+    if (!detached && g_hdr && g_hdr->state == 1 && !g_stopping && vt) {
+        InterlockedIncrement((volatile LONG *)&g_hdr->swap_calls);
+        hr = ((HRESULT (WINAPI *)(void *, UINT, const IID *, void **))
+                  vt[VT_SLOT(IDXGISwapChain, GetBuffer)])(sc, 0, &IID_TEX2D_OFFICIAL, &tex);
+        if (hr < 0 || !tex) {
+            g_hdr->gl_err = 0x2100 | ((DWORD)hr & 0xFFF);   /* hr 编进面包屑定位 */
+            goto fwd;
+        }   /* 非 d3d11 / 无缓冲 */
+        D3D11_TEXTURE2D_DESC d;
+        ((void (WINAPI *)(void *, void *))
+            (*(void ***)tex)[VT_SLOT(ID3D11Texture2D, GetDesc)])(tex, &d);
+        if (!d.Width || !d.Height || (UINT64)d.Width * d.Height * 4 > FRAME_CAP) {
+            g_hdr->gl_err = 7;
+            goto fwd;
+        }
+        /* GetDevice 是 (REFIID, void**) 双参(IDXGIDeviceSubObject) —— 单参调用
+         * 会 stdcall 栈错位直接 AV(实机踩过) */
+        hr = ((HRESULT (WINAPI *)(void *, const IID *, void **))
+                  vt[VT_SLOT(IDXGISwapChain, GetDevice)])(sc, &IID_DEV11_OFFICIAL, &unk);
+        if (hr < 0 || !unk) { g_hdr->gl_err = 0x23; goto fwd; }
+        hr = ((HRESULT (WINAPI *)(void *, void **))
+                  (*(void ***)unk)[VT_SLOT(ID3D11Device, GetImmediateContext)])(unk, &ctx);
+        if (hr < 0 || !ctx) { g_hdr->gl_err = 0x24; goto fwd; }
+        /* CPU 读面按尺寸重建(STAGING+READ; SampleDesc 必须 1 否则创建拒绝) */
+        if (!g_dxgiStaging || g_dxgiW != d.Width || g_dxgiH != d.Height) {
+            D3D11_TEXTURE2D_DESC sd = d;
+            sd.Usage = D3D11_USAGE_STAGING;       /* 3 */
+            sd.BindFlags = 0;
+            sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;  /* 0x20000 */
+            sd.MiscFlags = 0;
+            sd.MipLevels = 1;
+            sd.ArraySize = 1;
+            sd.SampleDesc.Count = 1;
+            if (g_dxgiStaging)
+                ((ULONG (WINAPI *)(void *))
+                    (*(void ***)g_dxgiStaging)[2])(g_dxgiStaging);
+            g_dxgiStaging = NULL;
+            hr = ((HRESULT (WINAPI *)(void *, const void *, const void *, void **))
+                      (*(void ***)unk)[VT_SLOT(ID3D11Device, CreateTexture2D)])
+                (unk, &sd, NULL, &g_dxgiStaging);   /* 4 参: pInitialData=NULL */
+            if (hr < 0 || !g_dxgiStaging) { g_hdr->gl_err = 0x26; goto fwd; }
+            g_dxgiW = d.Width;
+            g_dxgiH = d.Height;
+        }
+        ((void (WINAPI *)(void *, void *, void *))
+            (*(void ***)ctx)[VT_SLOT(ID3D11DeviceContext, CopyResource)])(ctx, g_dxgiStaging, tex);
+        D3D11_MAPPED_SUBRESOURCE m = {0};
+        hr = ((HRESULT (WINAPI *)(void *, void *, UINT, UINT, UINT, void *))
+                  (*(void ***)ctx)[VT_SLOT(ID3D11DeviceContext, Map)])
+            (ctx, g_dxgiStaging, 0, D3D11_MAP_READ, 0, &m);   /* READ=1, 4=WRITE_DISCARD */
+        if (hr < 0 || !m.pData) { g_hdr->gl_err = 0x29; goto fwd; }
+        {   /* Map 是 top-down(行 0=顶), SHM 协议自底向上: out[0]=底行, host 再翻正 */
+            BYTE *out = (BYTE *)g_hdr + FRAME_OFF;
+            BYTE *src = (BYTE *)m.pData;
+            UINT pitch = m.RowPitch ? m.RowPitch : d.Width * 4;
+            for (UINT y = 0; y < d.Height; y++)
+                memcpy(out + y * d.Width * 4,
+                       src + (d.Height - 1 - y) * pitch, d.Width * 4);
+        }
+        ((void (WINAPI *)(void *, void *, UINT))
+            (*(void ***)ctx)[VT_SLOT(ID3D11DeviceContext, Unmap)])(ctx, g_dxgiStaging, 0);
+        g_hdr->gl_err = 0;
+        g_hdr->frame_w = d.Width;
+        g_hdr->frame_h = d.Height;
+        g_hdr->frame_fmt = 1;                     /* BGRA8 行序自底向上 */
+        InterlockedIncrement((volatile LONG *)&g_hdr->frame_seq);
+    }
+fwd:
+    if (tex) ((ULONG (WINAPI *)(void *))(*(void ***)tex)[2])(tex);
+    if (ctx) ((ULONG (WINAPI *)(void *))(*(void ***)ctx)[2])(ctx);
+    if (unk) ((ULONG (WINAPI *)(void *))(*(void ***)unk)[2])(unk);
+    /* 转发真尾跳(d3d9 Present 同案: 栈上多一层外来帧可能被运行时检查打崩);
+     * 按本 swap 的 vtable 代数取各自 real(多代互不串) */
+    int gen = 0;
+    for (int i = 0; i < g_nDxgiSwapVt; i++)
+        if (g_dxgiSwapVt[i] == vt) { gen = i; break; }
+    __attribute__((musttail))
+    return g_realDxgiPresent[gen](sc, sync, flags);
+}
+
+static void dxgi_hook_swapchain(void *sc)
+{
+    void **vt = *(void ***)sc;
+    if (!vt || vt[VT_SLOT(IDXGISwapChain, Present)] == (void *)our_dxgi_present)
+        return;                                   /* 类槽已补(幂等) */
+    if (g_nDxgiSwapVt >= 3) return;
+    DWORD oldProt;
+    if (!VirtualProtect(&vt[VT_SLOT(IDXGISwapChain, Present)], sizeof(void *),
+                        PAGE_READWRITE, &oldProt))
+        return;
+    g_realDxgiPresent[g_nDxgiSwapVt] = (FnDxgiPresent)vt[VT_SLOT(IDXGISwapChain, Present)];
+    vt[VT_SLOT(IDXGISwapChain, Present)] = (void *)our_dxgi_present;
+    g_dxgiSwapVt[g_nDxgiSwapVt] = vt;
+    g_nDxgiSwapVt++;
+    VirtualProtect(&vt[VT_SLOT(IDXGISwapChain, Present)], sizeof(void *), oldProt, &oldProt);
+    FlushInstructionCache(GetCurrentProcess(), vt, 0);
+}
+
+static void dxgi_hook_factory(void *factory)
+{
+    void **vt = *(void ***)factory;
+    if (!vt) return;
+    /* CreateSwapChain = IDXGIFactory 基座槽(Factory/1/2/3/4/5 全层级实现) */
+    if (vt[VT_SLOT(IDXGIFactory, CreateSwapChain)] != (void *)our_factory_create_swap_chain) {
+        DWORD oldProt;
+        if (VirtualProtect(&vt[VT_SLOT(IDXGIFactory, CreateSwapChain)], sizeof(void *),
+                           PAGE_READWRITE, &oldProt)) {
+            g_realFactoryCreateSwapChain = (HRESULT (WINAPI *)(void *, void *, void *, void **))
+                vt[VT_SLOT(IDXGIFactory, CreateSwapChain)];
+            vt[VT_SLOT(IDXGIFactory, CreateSwapChain)] = (void *)our_factory_create_swap_chain;
+            VirtualProtect(&vt[VT_SLOT(IDXGIFactory, CreateSwapChain)], sizeof(void *),
+                           oldProt, &oldProt);
+            FlushInstructionCache(GetCurrentProcess(), vt, 0);
+        }
+    }
+    /* Factory2 层级(flip-model ForHwnd 主路): QI 判层级, 真是 Factory2 才补高槽
+     * —— 对纯 Factory/1 对象写槽 15/16 会破坏它的 vtable 内存 */
+    void *f2 = NULL;
+    if (((HRESULT (WINAPI *)(void *, const IID *, void **))
+             vt[VT_SLOT(IDXGIObject, QueryInterface)])(factory, &IID_FACTORY2_OFFICIAL, &f2) >= 0
+        && f2) {
+        void **vt2 = *(void ***)f2;
+        ((ULONG (WINAPI *)(void *))vt2[2])(f2);   /* QI 的引用计数放回 */
+        if (vt2[VT_SLOT(IDXGIFactory2, CreateSwapChainForHwnd)]
+                != (void *)our_factory_for_hwnd) {
+            DWORD oldProt;
+            if (VirtualProtect(&vt2[VT_SLOT(IDXGIFactory2, CreateSwapChainForHwnd)],
+                               sizeof(void *), PAGE_READWRITE, &oldProt)) {
+                g_realFactoryForHwnd = (HRESULT (WINAPI *)(void *, void *, HWND, const void *,
+                                                           const void *, void *, void **))
+                    vt2[VT_SLOT(IDXGIFactory2, CreateSwapChainForHwnd)];
+                vt2[VT_SLOT(IDXGIFactory2, CreateSwapChainForHwnd)] = (void *)our_factory_for_hwnd;
+                g_realFactoryForCoreWindow = (HRESULT (WINAPI *)(void *, void *, void *,
+                                                                 const void *, const void *, void **))
+                    vt2[VT_SLOT(IDXGIFactory2, CreateSwapChainForCoreWindow)];
+                vt2[VT_SLOT(IDXGIFactory2, CreateSwapChainForCoreWindow)] =
+                    (void *)our_factory_for_core_window;
+                VirtualProtect(&vt2[VT_SLOT(IDXGIFactory2, CreateSwapChainForHwnd)],
+                               sizeof(void *), oldProt, &oldProt);
+                FlushInstructionCache(GetCurrentProcess(), vt2, 0);
+            }
+        }
+    }
+}
+
+/* 截获创建: 转发真函数, 成功则补出场对象槽(blit/flip-model/直建路全汇到 swap) */
+static HRESULT WINAPI our_factory_create_swap_chain(void *self, void *device,
+                                                    void *desc, void **swap)
+{
+    HRESULT hr = g_realFactoryCreateSwapChain(self, device, desc, swap);
+    if (hr >= 0 && swap && *swap) dxgi_hook_swapchain(*swap);
+    return hr;
+}
+
+static HRESULT WINAPI our_factory_for_hwnd(void *self, void *device, HWND hwnd,
+                                           const void *desc1, const void *fsdesc,
+                                           void *restrict_out, void **swap)
+{
+    HRESULT hr = g_realFactoryForHwnd(self, device, hwnd, desc1, fsdesc,
+                                      restrict_out, swap);
+    if (hr >= 0 && swap && *swap) dxgi_hook_swapchain(*swap);
+    return hr;
+}
+
+static HRESULT WINAPI our_factory_for_core_window(void *self, void *device, void *window,
+                                                  const void *desc1, const void *fsdesc,
+                                                  void **swap)
+{
+    HRESULT hr = g_realFactoryForCoreWindow(self, device, window, desc1, fsdesc, swap);
+    if (hr >= 0 && swap && *swap) dxgi_hook_swapchain(*swap);
+    return hr;
+}
+
+static HRESULT WINAPI our_d3d11_create_device_and_swap_chain(
+    void *adapter, UINT driver_type, HMODULE software, UINT flags,
+    const void *feature_levels, UINT levels, UINT sdk, const void *desc,
+    void **swap, void **device, UINT *out_level, void **context)
+{
+    HRESULT hr = g_realD3D11CreateDASC(adapter, driver_type, software, flags,
+                                       feature_levels, levels, sdk, desc,
+                                       swap, device, out_level, context);
+    if (hr >= 0 && swap && *swap) dxgi_hook_swapchain(*swap);
+    return hr;
+}
+
+static int hook_dxgi(void)
+{
+    if (g_nDxgiSwapVt || g_realFactoryCreateSwapChain) {
+        InterlockedExchange(&g_detached, 0);      /* 本会话已挂: 清闸即恢复 */
+        return 0;
+    }
+    HMODULE dxgi = GetModuleHandleA(OBF_DXGI);
+    if (!dxgi) dxgi = LoadLibraryA(OBF_DXGI);
+    if (!dxgi) return 160;
+    g_d3d11Mod = GetModuleHandleA(OBF_D3D11);
+    if (!g_d3d11Mod) g_d3d11Mod = LoadLibraryA(OBF_D3D11);
+    if (!g_d3d11Mod) return 161;                  /* d3d11 缺: GetBuffer 筛子无意义 */
+    MH_STATUS mhs = MH_Initialize();
+    if (mhs != MH_OK && mhs != MH_ERROR_ALREADY_INITIALIZED) return 162;
+    int hooked = 0;
+    static const struct { const char *name; void *detour; void **real; } entries[] = {
+        { OBF_CREATEDXGIFACTORY,   (void *)our_factory_dxgi_crt,   (void **)&g_realFactoryCrt },
+        { OBF_CREATEDXGIFACTORY1,  (void *)our_factory_dxgi_crt1,  (void **)&g_realFactoryCrt1 },
+        { OBF_CREATEDXGIFACTORY2,  (void *)our_factory_dxgi_crt2,  (void **)&g_realFactoryCrt2 },
+        { OBF_D3D11CREATEDEVICEANDSWAPCHAIN, (void *)our_d3d11_create_device_and_swap_chain,
+          (void **)&g_realD3D11CreateDASC },
+    };
+    int resolved = 0;
+    for (int i = 0; i < 4; i++) {
+        void *fn = (void *)GetProcAddress(i < 3 ? dxgi : g_d3d11Mod, entries[i].name);
+        if (!fn) continue;
+        resolved++;
+        if (MH_CreateHook(fn, entries[i].detour, entries[i].real) == MH_OK
+            && MH_EnableHook(fn) == MH_OK)
+            hooked++;
+    }
+    if (!resolved) return 163;
+    if (!hooked) return 164;
+    g_hdr->arg0 = (DWORD)resolved;                /* 诊断位图: 解析/挂载数(宿主 args 读) */
+    g_hdr->arg1 = (DWORD)hooked;
+    InterlockedExchange(&g_detached, 0);          /* 清闸, our_dxgi_present 可捕获 */
+    return 0;
+}
+
+static void unhook_dxgi(void)
+{
+    if (!g_nDxgiSwapVt && !g_dxgiStaging) return;
+    InterlockedExchange(&g_detached, 1);          /* 先闸住 our_dxgi_present(转发) */
+    Sleep(60);                                    /* 等在途捕获出完 */
+    if (g_dxgiStaging)
+        ((ULONG (WINAPI *)(void *))(*(void ***)g_dxgiStaging)[2])(g_dxgiStaging);
+    g_dxgiStaging = NULL;
+    g_dxgiW = g_dxgiH = 0;
+    /* 创建钩/槽钩不摘(变速齿轮同哲学: 钩随 DLL 常驻, detached 闸管语义);
+     * g_nDxgiSwapVt 保留作代数记账(hook_dxgi 首判处清闸复用) */
+}
+
 /* ---- 假激活(大漠 EnableFakeActive / dx.public.active.*): 子类化目标窗口,
  * ---- 吞"失焦/失活"族消息并按需合成一次激活, 让后台窗口自认为有焦点。 ---- */
 static WNDPROC g_origProc;
@@ -1319,13 +1653,14 @@ static DWORD WINAPI worker(LPVOID unused)
             BOOL quit = FALSE;
             switch (g_hdr->cmd) {
             case CMD_PING:    r = 0x50494731u; break;
-            case CMD_BYE:     unhook_gl(); unhook_d3d9(); unhook_mouse_pack();
+            case CMD_BYE:     unhook_gl(); unhook_d3d9(); unhook_dxgi(); unhook_mouse_pack();
                               fake_active(0);
                               speed_reset();           /* 变速复位: rate 归 1.0+重扎基线, 钩常驻(dm 解绑同款) */
                               g_hdr->state = 0; r = 0;
                               quit = TRUE; break;
             case CMD_HOOK_GL: r = (DWORD)hook_gl(); break;
             case CMD_HOOK_D3D9: r = (DWORD)hook_d3d9(); break;
+            case CMD_HOOK_DXGI: r = (DWORD)hook_dxgi(); break;
             case CMD_KEYSTATE: r = (DWORD)hook_keystate(); break;
             case CMD_MOUSE_LOCK:
                               if (g_hdr->arg0) r = (DWORD)hook_mouse_lock();

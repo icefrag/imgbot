@@ -16,6 +16,10 @@ PW_CLIENTONLY = 1
 PW_RENDERFULLCONTENT = 2
 SW_RESTORE = 9
 SRCCOPY = 0x00CC0020
+WM_PRINTCLIENT = 0x0318
+PRF_CLIENT = 0x01
+PRF_ERASEBKGND = 0x02
+SMTO_ABORTIFHUNG = 0x0002
 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
 SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
 
@@ -50,6 +54,20 @@ def capture_client(window) -> np.ndarray:
     不要求窗口在前台, 被遮挡亦可; 真最小化时自动 SW_RESTORE 还原后重试
     (最小化下目标停笔, 任何截图都拿不到新像素)。坐标仍是客户区相对。
     """
+    return _capture_loop(window, _capture_once)
+
+
+def capture_client_gdi2(window) -> np.ndarray:
+    """gdi2 第二截图路(大漠 gdi2 词汇对应物): SendMessage(WM_PRINTCLIENT, hdc,
+    PRF_CLIENT) 让窗口过程自己把客户区画进 DC —— PrintWindow 全黑/冻结帧目标
+    的救路(大漠文档: "如果gdi模式发现后台不刷新时,可以考虑用gdi2模式";
+    PrintWindow 失败的目标窗口过程往往仍应答 WM_PRINTCLIENT)。GDI 输出型窗口
+    两路等价; 仍全黑抛 CaptureError(该目标两路都不吃, 回注入件 dx)。"""
+    return _capture_loop(window, _capture_wm_print_once)
+
+
+def _capture_loop(window, once_fn) -> np.ndarray:
+    """截图公共骨架: 尺寸/最小化还原/黑帧重试, once_fn 决定截图通道。"""
     try:
         _, _, w, h = window.client_rect()
     except OSError as e:
@@ -65,7 +83,7 @@ def capture_client(window) -> np.ndarray:
     attempts, last = (3 if restored else 1), None
     for _ in range(attempts):
         try:
-            return _capture_once(window, w, h)
+            return once_fn(window, w, h)
         except CaptureError as e:
             last = e
             _drain_paints()
@@ -162,6 +180,33 @@ def _capture_once(window, w, h):
 
     if not ok and _all_black(img):
         raise CaptureError("PrintWindow 失败且画面全黑: %r" % (window.hwnd,))
+    return img
+
+
+def _capture_wm_print_once(window, w, h):
+    """gdi2 路(工单 damo-bg-capture/04): SendMessage(WM_PRINTCLIENT, hdc,
+    PRF_CLIENT) 让窗口过程把客户区自绘进 DC —— 响应此消息的应用(GDI 输出型,
+    记事本等标准控件窗)在 PrintWindow 全黑时仍能画。SMTO 防目标挂起拖死本
+    进程; 2s 超时对静态窗口足够。"""
+    hdc_win = user32.GetWindowDC(window.hwnd)
+    if not hdc_win:
+        raise CaptureError("GetWindowDC 失败: %d" % ctypes.get_last_error())
+    hdc_mem = gdi32.CreateCompatibleDC(hdc_win)
+    hbmp = gdi32.CreateCompatibleBitmap(hdc_win, w, h)
+    gdi32.SelectObject(hdc_mem, hbmp)
+    res = wt.DWORD()
+    try:
+        r = user32.SendMessageTimeoutW(window.hwnd, WM_PRINTCLIENT, hdc_mem,
+                                       PRF_CLIENT | PRF_ERASEBKGND,
+                                       SMTO_ABORTIFHUNG, 2000, ctypes.byref(res))
+        img = _dib_to_bgr(hdc_mem, hbmp, w, h)
+    finally:
+        gdi32.DeleteObject(hbmp)
+        user32.ReleaseDC(window.hwnd, hdc_win)
+        gdi32.DeleteDC(hdc_mem)
+
+    if not r and _all_black(img):
+        raise CaptureError("WM_PRINTCLIENT 未达且画面全黑: %r" % (window.hwnd,))
     return img
 
 
