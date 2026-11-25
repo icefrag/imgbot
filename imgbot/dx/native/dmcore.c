@@ -840,7 +840,7 @@ static UINT   g_dxgiW, g_dxgiH;
 static HRESULT WINAPI our_dxgi_present(void *sc, UINT sync, UINT flags)
 {
     LONG detached = g_detached;
-    void *tex = NULL, *unk = NULL, *dev = NULL, *ctx = NULL;
+    void *tex = NULL, *unk = NULL, *ctx = NULL;
     HRESULT hr;
     void **vt = *(void ***)sc;
     if (!detached && g_hdr && g_hdr->state == 1 && !g_stopping && vt) {

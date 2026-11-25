@@ -22,7 +22,8 @@ from .proto import (CMD_BIND, CMD_BYE, CMD_FAKE_ACTIVE, CMD_HIDE, CMD_HOOK_D3D9,
                     CMD_HOOK_DXGI, CMD_HOOK_GL, CMD_KEY, CMD_KEYSTATE, CMD_MOUSE,
                     CMD_MOUSE_LOCK, CMD_MOUSE_PACK, CMD_PING, CMD_RAWINFO, CMD_SPEED,
                     FRAME_OFF, FIELD_NAMES, HEADER_SIZE, KEY_CHAR, KEY_DOWN, KEY_UP,
-                    M_DBLCLK, M_LDOWN, M_LUP, M_MDOWN, M_MUP, M_RDOWN, M_RUP,
+                    M_DBLCLK, M_LDOWN, M_LUP, M_MDOWN, M_MOVE, M_MUP,
+                    M_RDOWN, M_RUP,
                     M_WHEEL_DOWN, M_WHEEL_UP, OFF, PROTO_VERSION, SHM_MAGIC,
                     SHM_SIZE)
 # 常量再导出: dx.input / 脚本一直 `from .host import M_*` 拿, 导入面不变
@@ -290,8 +291,9 @@ class DxHost:
 
     def hook_auto(self) -> str:
         """按目标已加载的图形栈自动选钩子: GL → d3d9 → DXGI, 首个成功即用。
-        降级语义: 每路的"目标不匹配/此架构挂不上"码(20 未加载 opengl32, 31 无
-        热补丁哨兵[x64], 60/62/63/64 d3d9 同理)落到下一路; 其余失败码立即抛。
+        降级语义: 每路的"目标不匹配/此架构挂不上"码(GL 20 未加载/31 无热补丁
+        哨兵[x64]; d3d9 60 未加载/62 无哨兵)落到下一路; 63/64(蹦床/页保护失败
+        =钩引擎故障)与其余失败码立即抛, 不吞真实错误。
         x64 GL/d3d9 游戏会连降两级落 DXGI(不可能命中时汇总各路 rc 抛 RuntimeError)。"""
         errors = []
         rc = self._cmd(CMD_HOOK_GL)
@@ -303,7 +305,7 @@ class DxHost:
         rc9 = self._cmd(CMD_HOOK_D3D9)
         if rc9 == 0:
             return "d3d9"
-        if rc9 not in (60, 62, 63, 64):
+        if rc9 not in (60, 62):
             raise RuntimeError(f"d3d9 钩子失败 rc={rc9}: {HOOK_ERRORS.get(rc9, '未知')}")
         errors.append(f"d3d9 rc={rc9}({HOOK_ERRORS.get(rc9, '未知')})")
         rcg = self._cmd(CMD_HOOK_DXGI)

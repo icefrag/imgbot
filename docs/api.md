@@ -17,8 +17,10 @@
 - `AdbTarget` 另有: `serial`(属性)、`save_screenshot(path)`、`swipe(...)`、`keyevent(code)`、
   `shell(*args)`、`type_text(text)`、`start_app(pkg, act)`、`stop_app(pkg)`。
 - PC 窗口不设 Target 门面: 统一走 **DmSoft.BindWindow**(大漠全模式字符串
-  normal/gdi/dx × windows/windows2/dx/normal, 键鼠/键面见 dmsoft 的 `keymouse`
-  属性与 `KeyPress` 族)。
+  normal/gdi/gdi2/dx/dx2/dx3 × windows/windows2/dx/normal, 键鼠/键面见 dmsoft 的
+  `keymouse` 属性与 `KeyPress` 族)。display `"dx2"`/`"dx3"` = 无注入后台图色
+  (绑定即把窗口停靠屏外细缝, 图色走 PrintWindow 读 DWM 重定向表面, unbind 还原
+  窗口原位; 杀软拦注入件时的备胎, 键鼠只支持 windows/windows2/normal)。
 - adb 帧源 adapter: `AdbTarget` 结构化满足 `ops.FrameSource`(`screen`/`keymouse`/
   `GetBindWindow`/`GetClientSize`), 可直接 `Ops(AdbTarget(serial))`; `keymouse` 的
   `click/settle`/`double_click`/`drag(steps, interval)` 走 actions 拟人层。
@@ -32,10 +34,10 @@
 | `decode_png(png_bytes) -> ndarray` | BGR | adb PNG bytes → 图像 |
 | `decode_framebuffer(raw_bytes) -> ndarray` | BGR | adb 原始帧(screencap 无 -p) → 图像; 头不可认抛 ValueError |
 | `key_out_background(name, tol=8) -> float` | 保留笔画占比 | 手动键控(旧流程兼容, 一般不用) |
-| `find(screen, tpl, threshold=0.85, region=None)` | `(x, y, score)` \| None | 单目标模板匹配; `region=(x1,y1,x2,y2)` 限矩形, 返回**全屏**坐标 |
+| `find(screen, tpl, threshold=0.85, region=None, exclude=None)` | `(x, y, score)` \| None | 单目标模板匹配; `region=(x1,y1,x2,y2)` 限矩形, 返回**全屏**坐标 |
 | `find_any(screen, names, threshold=0.85)` | `(x, y, score)` \| None | 多模板任一命中, 取最高分; 缺素材跳过 |
-| `find_all(screen, tpl, threshold=0.85, min_dist=12)` | `[(x, y, score)]` | 多目标(数个数), 近邻去重, 按 x 排序 |
-| `find_by_points(screen, rect, points, direction=0)` | `(x, y)` \| None | **多点找色**: 全点命中才返回锚点; `points=[Pt(...)]` |
+| `find_all(screen, tpl, threshold=0.85, min_dist=12, exclude=None)` | `[(x, y, score)]` | 多目标(数个数), 近邻去重, 按 x 排序 |
+| `find_by_points(screen, rect, points, direction=0, exclude=None)` | `(x, y)` \| None | **多点找色**: 全点命中才返回锚点; `points=[Pt(...)]` |
 | `Pt(dx, dy, col, tol=8, alts=(), anti=False)` | — | 多点找色点阵项(对接规范见 `多点找色Pt规范.md`) |
 | `wait_find(screenshot_fn, name, timeout=30, interval=0.4, threshold=0.85, stop_event=None)` | `(x, y, score)` \| None | 轮询等模板出现; `name` 可传文件名或已加载图; **停止优先** |
 | `changed(a, b, diff=6.0)` | bool | 两屏是否明显不同(判切屏/加载) |
@@ -43,12 +45,13 @@
 
 区域找色族(大漠 FindColor/GetColorNum/GetAveRGB/CmpColor 对应物, `region` 同为 `(x1,y1,x2,y2)`):
 找类函数(`find`/`find_all`/`find_color`/`count_color`/`find_by_points`)另有 `exclude=(x1,y1,x2,y2)`
-排除区参数(大漠 SetExcludeRegion 对应物, 壳层 `DmSoft.SetExcludeRegion(type,x1,y1,x2,y2)` 记账): 落区内命中丢弃。
+排除区参数(大漠 SetExcludeRegion 对应物, 壳层 `DmSoft.SetExcludeRegion(type,x1,y1,x2,y2)` 记账):
+实现=命中后坐标过滤(落区最优命中即未命中, 不递补次优; 区外命中不受影响)。
 
 | API | 返回 |
 |---|---|
-| `find_color(screen, colors, tol=10, region=None)` | `[(x, y)]` —— colors 单色或列表(任一命中) |
-| `count_color(screen, colors, tol=10, region=None)` | `int` 命中像素数 |
+| `find_color(screen, colors, tol=10, region=None, exclude=None)` | `[(x, y)]` —— colors 单色或列表(任一命中) |
+| `count_color(screen, colors, tol=10, region=None, exclude=None)` | `int` 命中像素数 |
 | `cmp_color(screen, x, y, colors, tol=8)` | `bool` 单点比色 |
 | `color_at(screen, x, y)` | `(B, G, R)` |
 | `ave_color(screen, region=None)` | `(B, G, R)` 均值 |

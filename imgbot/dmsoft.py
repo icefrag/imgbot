@@ -13,7 +13,8 @@
 - display: "normal"(前台) / "gdi"(PrintWindow) / "gdi2"(WM_PRINTCLIENT 救路) /
   "dx2"/"dx3"(无注入: 停靠屏外细缝+PrintWindow, 杀软拦注入件备胎) /
   "dx"*("dx","dx.graphic.2d/3d/opengl" → 注入件; GL/d3d9(x86 hotpatch)/
-  dx10-12(x86+x64 MinHook DXGI)全通 —— hook_auto 自动选路 GL→d3d9→DXGI)
+  dx11(x86+x64 MinHook DXGI; dx10/dx12 设备暂不命中, 面包屑 0x2100|hr)——
+  hook_auto 自动选路 GL→d3d9→DXGI)
 - mouse/keypad: "windows"* → PostMessage; "windows2"* → 潜影 dx 消息鼠标 +
   GetCursorPos 虚拟光标锁(大漠 windows2 缩写语义); "dx"* → 注入件全家桶
   (消息配方 + 键态/光标锁/GetCapture 虚拟化/GetCursorInfo/ClipCursor/取消息层
