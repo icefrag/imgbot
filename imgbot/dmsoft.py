@@ -186,9 +186,9 @@ class DmSoft:
         return 1
 
     def SetGraphicRevert(self, enable: int) -> int:
-        """帧上下反转(大漠 dx.public.graphic.revert 公共参数对应物, 工单
-        damo-bg-capture/03): 部分窗口截出来上下反向(GL/D3D/DXGI 帧路都可能),
-        enable=1 后取帧跳过翻正。需要 dx 通道(注入件图色)。返回 1。"""
+        """帧上下反转(enable=1 后取帧跳过翻正): 部分窗口截出来上下反向
+        (GL/D3D/DXGI 帧路都可能), 大漠 dx.public.graphic.revert 公共参数对应物,
+        工单 damo-bg-capture/03。需要 dx 通道(注入件图色)。返回 1。"""
         self._need_dx()
         self._dx.set_revert(bool(enable))
         return 1
