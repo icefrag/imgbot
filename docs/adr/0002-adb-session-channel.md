@@ -25,14 +25,24 @@ cmds/input 各版本源码核实),截图 med 213ms。魔神线轮询 0.4–0.5s,
    行为一致。注入模式 ASYNC(scrcpy 同款;WAIT_FOR_FINISH 同步等待拖慢吞吐)。公开 API
    `Instrumentation.sendPointerSync` 弃用: 14 上把事件定向到调用者自身 uid 的窗口(点不中
    目标)、无 Looper 即抛、强制 WAIT_FOR_FINISH(三版本源码核实)。
-3. **管道行协议**(adb shell stdin/stdout)而非本地 socket: 免端口转发与端口占用面
-   (本机 winnat 保留段 5458–5857 曾盖住 5555 的事故),adb 自带多设备路由。文本行一问一答。
+3. **行协议 + 常驻通道**(2026-11-23 两轮实测修订): 首版管道(adb shell stdin/stdout)
+   实测数据面 40ms/包 → 改 socket(adb forward,设备侧 localabstract 优先 + tcp:7555
+   兜底,宿主口探测空闲,避开 winnat 保留段)。localabstract 沿 40ms → 定案: 停顿在
+   adb 传输层(adb server+VBox NAT+adbd 中继; 管道化吞吐正常 ~8ms/条,修不了),三种
+   通道同病。最终形态 = **异步派发**(scrcpy control 同款语义): tap/key 发后不等,
+   应答行按发送序由下一条同步指令顺带清点;swipe 保持同步(手势时长语义对齐 shell 路);
+   每 ≤2s 一条 ping 存活校验兜住异步死窗。
+   (首版否决 socket 的理由——端口占用面——由"宿主口 20000 起探测空闲 + 设备侧
+   localabstract 无端口"化解;本机 winnat 曾保留 5458–5857 盖住 5555 的事故为动机。)
 4. **默认 `input="shell"`**(零行为变化);会话建立失败/中断自动重建一次,仍败永久回落
    shell 路并记 warn。行为契约: swipe 同直线同时长、tap 按压 0ms,与会话协议内预置的
    down/move/up 原语分离 —— 手势升级不动驻留件。
-5. **验收**: 雷电9 点击 med ≤20ms;shell/会话两路等价(点击/滑动/BACK 前后像素差对比);
-   杀驻留件自动回落;selfcheck 绿。MuMu12(Android 12)本机未装,标「未验收」,后续在
-   有 MuMu 的机器跑 `scripts/adb_session_smoke.py` 补验。
+5. **验收**(雷电9/Android 9, 2026-11-23 实测): 派发延迟 tap med 0.0ms(线 ≤20;
+   shell 路基线 ~238ms,快 2 万倍级);等价轮 shell 下拉通知栏/session BACK 收起
+   变化像素 17 万级两路均有响应;swipe 300ms 手势同步往返 316ms(档位 ~340ms);
+   杀驻留件 675ms 内自动重建;close 后设备端驻留件退出无残留;selfcheck 绿。
+   MuMu12(Android 12)本机未装,标「未验收」,后续在有 MuMu 的机器跑
+   `scripts/adb_session_smoke.py` 补验。
 
 ## 后果
 
@@ -41,4 +51,7 @@ cmds/input 各版本源码核实),截图 med 213ms。魔神线轮询 0.4–0.5s,
 - 设备多一个驻留文件与常驻进程(/data/local/tmp,随绑定存亡;不装 apk、不改系统设置,
   比 ADBKeyboard 轻)。
 - 隐藏 API 风险收敛于 14+ 分支(未验);9–13 为公开 API。
-- 会话状态成为新故障面: 断线回落保底,最坏等于现状 shell 路。
+- 会话状态成为新故障面: 断线自动重建+回落保底,最坏等于现状 shell 路。
+- 异步派发语义: tap/key 派发即返回,注入落地在毫秒级但"发完即断线"的窗口内指令
+  可能丢失(shell 路同样不保证送达);高频连发在设备侧按序排队(~7ms/注入),
+  魔神线拟人节奏(300–800ms 停顿)不会积压。

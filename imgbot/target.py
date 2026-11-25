@@ -1,7 +1,8 @@
 """操作目标抽象: 绑定一次目标, 之后截图/输入全打它(大漠 BindWindow 思想).
 
 adb 后端: AdbTarget(安卓模拟器/真机) —— capture=adb exec-out screencap,
-input=adb shell input(天然后台); 满足 FrameSource 帧源协议, 可直接喂 Ops 门面
+input="shell"(逐动作 adb shell input, 默认)/"session"(常驻会话, ADR-0002,
+断线自动回落 shell 路); 满足 FrameSource 帧源协议, 可直接喂 Ops 门面
 (screen/keymouse/GetBindWindow/GetClientSize 四件齐, 拟人点击走 actions 层).
 PC 窗口侧不设 Target 门面, 统一走 DmSoft.BindWindow(大漠全模式字符串:
 normal/gdi/dx × windows/windows2/dx/normal, 见 imgbot.dmsoft —— 潜影 dx 通道
@@ -62,8 +63,17 @@ class _AdbKeyMouse:
 
 
 class AdbTarget(Target):
-    def __init__(self, serial: str, adb_path: str = "adb"):
-        self.device = AdbDevice(serial, adb_path)
+    def __init__(self, serial: str, adb_path: str = "adb", input: str = "shell"):
+        """input 通道(ADR-0002): "shell"=逐动作 adb shell input(默认, 零行为变化);
+        "session"=常驻会话(adb_session.SessionDevice, 点击毫秒级, 断线自动回落 shell 路)。
+        capture 通道留位(现有 exec-out screencap)。"""
+        if input not in ("shell", "session"):
+            raise NotImplementedError(f"input 通道未实现: {input}")
+        if input == "session":
+            from .adb_session import SessionDevice
+            self.device = SessionDevice(serial, adb_path)
+        else:
+            self.device = AdbDevice(serial, adb_path)
         self._mk: _AdbKeyMouse | None = None
 
     @property
@@ -121,3 +131,9 @@ class AdbTarget(Target):
 
     def stop_app(self, package: str):
         self.device.stop_app(package)
+
+    def close(self):
+        """收口会话等随绑定资源(session 通道的常驻会话); 不调则靠宿主进程退出兜底。"""
+        closer = getattr(self.device, "close", None)
+        if closer is not None:
+            closer()

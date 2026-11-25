@@ -10,12 +10,12 @@
 
 | API | 说明 |
 |---|---|
-| `AdbTarget(serial, adb_path="adb")` | 安卓模拟器/真机后端(adb 截图+输入, 天然后台) |
-| PC 窗口 display 词汇 `"dx2"`/`"dx3"` | **无注入后台图色**(大漠 dx2 原语义): 绑定即把窗口停靠屏外细缝(留 2×30px 防遮挡节流), 图色走 PrintWindow 读 DWM 重定向表面; unbind 还原窗口原位。杀软拦注入件时的备胎; 键鼠只支持 windows/windows2/normal(dx 通道拒绝) |
+| `AdbTarget(serial, adb_path="adb", input="shell")` | 安卓模拟器/真机后端(adb 截图+输入, 天然后台); input 通道(ADR-0002): `"shell"`=逐动作 `adb shell input`(默认, 零行为变化), `"session"`=常驻会话(见 `adb_session`, 点击派发毫秒级, 断线自动回落 shell 路) |
 | `Target` | 最小公共接口基类: `screenshot() -> BGR ndarray` / `tap(x, y)` |
 
 - `AdbTarget` 另有: `serial`(属性)、`save_screenshot(path)`、`swipe(...)`、`keyevent(code)`、
-  `shell(*args)`、`type_text(text)`、`start_app(pkg, act)`、`stop_app(pkg)`。
+  `shell(*args)`、`type_text(text)`、`start_app(pkg, act)`、`stop_app(pkg)`、
+  `close()`(收口 session 通道的常驻会话; 不调则宿主进程退出兜底)。
 - PC 窗口不设 Target 门面: 统一走 **DmSoft.BindWindow**(大漠全模式字符串
   normal/gdi/gdi2/dx/dx2/dx3 × windows/windows2/dx/normal, 键鼠/键面见 dmsoft 的
   `keymouse` 属性与 `KeyPress` 族)。display `"dx2"`/`"dx3"` = 无注入后台图色
@@ -24,6 +24,22 @@
 - adb 帧源 adapter: `AdbTarget` 结构化满足 `ops.FrameSource`(`screen`/`keymouse`/
   `GetBindWindow`/`GetClientSize`), 可直接 `Ops(AdbTarget(serial))`; `keymouse` 的
   `click/settle`/`double_click`/`drag(steps, interval)` 走 actions 拟人层。
+
+## `imgbot/adb_session.py` —— 安卓输入常驻会话(ADR-0002)
+
+绑定时刻建立、随绑定存亡的输入通道: 安卓侧驻留件(`imgbot/assets/adbhelper.jar`,
+推到 `/data/local/tmp`)+ 宿主侧常驻通道(localabstract/tcp 经 adb forward, 失败退
+管道)+ 行协议。`tap/key` 发后不等派发(adb 传输层单次往返实测有 ~40ms 固定停顿,
+scrcpy control 同款绕法), `swipe` 同步保手势时长语义; 断线自动重建一次并重发,
+仍败永久回落 shell 路(行为等于现状), 回落记 warn。仅 `AdbTarget(serial,
+input="session")` 启用, 默认 `"shell"` 零行为变化。
+
+| API | 说明 |
+|---|---|
+| `SessionDevice(serial, adb_path="adb")` | `AdbDevice` 子类: `tap/swipe/keyevent` 走会话, 其余(`screenshot/shell/install/...`)原样继承; `_factory` 类属性为会话构造桩(单测替换位) |
+| `AdbSession(device)` | 单设备会话: `start()`(推驻留件+握手)/`cmd(line, timeout, sync)`/`close()`(quit+撤 forward, 幂等); `alive` 属性 |
+| `set_log(cb)` | 诊断回调注入, 回调签名 (msg, level="warn")(降级/回落时被调), 默认不输出 |
+| `AdbSessionError` | 会话层失败异常(建立/写入/应答/EOF), 抛出即走重建或回落 |
 
 ## `imgbot/vision.py` —— 图色层(吃 BGR ndarray, 与后端无关)
 
@@ -233,7 +249,7 @@ RGBA(alpha=掩码), `find`/`find_all` 对键控模板只比对非底色笔画 �
 | BindWindow(display,mouse,keypad) | `AdbTarget(serial)`(adb 侧); PC 窗口全词汇 **DmSoft.BindWindow**(gdi/gdi2/dx/dx2/dx3/windows/normal/windows2, 详见 dmsoft.py 头注释) |
 | dx.graphic.3d.10plus | dx 注入件 **CMD_HOOK_DXGI**(MinHook 钩 dxgi/d3d11 创建入口截获交换链, Present 捕获后备缓冲; x86+x64 双架构 —— dx 通道首条 64 位图色路; hook_auto 第三顺位, 仅 d3d11 设备命中) |
 | HackSpeed | **DmSoft.HackSpeed**(dx 通道: MinHook inline 钩三钟源本体, 大漠 1:1 复刻; rate=倍率×10, 10=常速, 0=冻结) |
-| dx.public.graphic.revert | **DmSoft.SetGraphicRevert**(dx 通道, 1=取帧不翻正; 治部分窗口截出上下反向) |
+| dx.public.graphic.revert | **DmSoft.SetGraphicRevert**(dx 通道, 1=取帧不翻正; 治部分 GL 窗口截出上下反向) |
 | FindWindow / EnumWindow | `win32.window.GameWindow.find`(类名/标题) / `enum_windows_dm`+`pids_of_process`(大漠 filter 位口径) |
 | SetWindowState | `win32.window.set_window_state`(大漠 0-14 口径: 激活/隐藏/置顶/禁用/强杀…) |
 | LockInput | **DmSoft.LockInput**(BlockInput, 锁定需管理员) |

@@ -18,6 +18,10 @@
 - **Target 双后端**(大漠 BindWindow 思想): adb 侧 `AdbTarget(serial)`, PC 窗口侧
   `DmSoft.BindWindow(hwnd, display, mouse, keypad, 0)`(大漠全词汇壳),
   绑定一次, 截图/输入全打它; 通道参数留位, 加新通道不改调用方。
+- **adb 输入通道**(ADR-0002): 默认 `input="shell"`(逐动作 adb shell input)零行为
+  变化; `input="session"` 走常驻会话(驻留件, 点击派发毫秒级, `adb_session.py`),
+  断线自动回落 shell 路。tap/key 发后不等(adb 传输层单次往返实测 ~40ms 固定停顿),
+  swipe 同步保手势时长语义。
 - **拟人两层**: adb 侧 `actions.tap`(±3px 偏移+随机延迟); win32 侧 `MouseKeyboard`
   (贝塞尔轨迹+ease-out)。业务点击一律走拟人层, 裸 tap 留给校准/测试。
 

@@ -237,6 +237,138 @@ def check_adb():
     assert s[4] >= 150, s
 
 
+def check_adb_session():
+    """常驻会话层(ADR-0002): 协议应答清点/回落状态机/生命周期 —— 假会话桩全离线。"""
+    from . import adb_session as sess_mod
+    from .adb_session import (AdbSession, AdbSessionError, SessionDevice,
+                              set_log as sess_set_log)
+
+    # ---- 协议应答清点: 异步积压按发送序由同步指令顺带清掉 ----
+    class _FakeChan:
+        def __init__(self, lines):
+            self.lines, self.sent, self.closed = list(lines), [], False
+
+        @property
+        def alive(self):
+            return not self.closed
+
+        def send_line(self, line):
+            self.sent.append(line)
+
+        def read_line(self, timeout):
+            if not self.lines:
+                raise AdbSessionError("应答超时(假桩耗尽)")
+            return self.lines.pop(0)
+
+        def close(self):
+            self.closed = True
+
+    dev = adb_mod.AdbDevice("emulator-5554")     # 构造不连设备
+    s = AdbSession(dev)
+    s._chan = _FakeChan(["OK tap", "OK tap", "OK ping sdk28"])
+    assert s.cmd("tap 1 2", sync=False) == ""    # 异步: 发后不等, pending 记账
+    assert s.cmd("tap 3 4", sync=False) == ""
+    assert s.cmd("ping") == "OK ping sdk28"      # 同步: 先清 2 条积压再取本指令应答
+    assert s._chan.sent == ["tap 1 2", "tap 3 4", "ping"], s._chan.sent
+    # 积压里的 ERR 只记日志不占错误位; 本指令 ERR 才抛
+    s._chan = _FakeChan(["ERR tap", "OK ping sdk28"])
+    s.cmd("tap 1 2", sync=False)
+    assert s.cmd("ping") == "OK ping sdk28"
+    s._chan = _FakeChan(["ERR ping"])
+    try:
+        s.cmd("ping")
+        raise AssertionError("同步 ERR 应抛 AdbSessionError")
+    except AdbSessionError:
+        pass
+
+    # ---- 回落状态机: 假会话工厂(建立失败→永久回落; 中断→重建一次重发原指令) ----
+    warns = []
+    sess_set_log(lambda msg, level="warn": warns.append(msg))
+
+    recorded = []
+
+    class _FakeSess:
+        inst = []
+
+        def __init__(self, device):
+            self.started, self.sent, self.alive_flag = 0, [], True
+            self.fail_start = getattr(type(self), "fail_start", False)
+            type(self).inst.append(self)
+
+        @property
+        def alive(self):
+            return self.alive_flag
+
+        def start(self):
+            self.started += 1
+            if self.fail_start:
+                raise RuntimeError("驻留件起不来")
+
+        def cmd(self, line, timeout=5.0, sync=True):
+            self.sent.append((line, sync))
+            if line == "tap 9 9" and len(self.sent) == 1 and getattr(type(self), "die_once", False):
+                type(self).die_once = False
+                self.alive_flag = False
+                raise RuntimeError("EOF")
+            return ""
+
+        def close(self):
+            self.alive_flag = False
+
+    dev2 = SessionDevice("emulator-5554")
+    assert isinstance(dev2, adb_mod.AdbDevice), "SessionDevice 应是 AdbDevice 子类(截图/shell 原样继承)"
+    dev2._run = lambda *a, **k: recorded.append(a) or b""   # 拦截 shell 路基类调用(回落记账)
+    _FakeSess.inst = []
+    _FakeSess.fail_start = False
+    _FakeSess.die_once = True
+    dev2._factory = _FakeSess
+
+    assert dev2.tap(1, 2) is None and not recorded, "正常路径应走会话, 不碰 shell 路"
+    fs = _FakeSess.inst[-1]
+    assert fs.sent == [("tap 1 2", False)], fs.sent          # tap 发后不等(sync=False)
+    assert dev2._send("ping") == ""                          # 同步指令走会话
+    assert _FakeSess.inst[-1].sent[-1] == ("ping", True)
+
+    # 中断→重建一次, 重发原指令( die_once 在首个会话首条 tap 上引爆 )
+    dev3 = SessionDevice("emulator-5554")
+    dev3._run = lambda *a, **k: recorded.append(a) or b""
+    _FakeSess.inst = []
+    _FakeSess.fail_start = False
+    _FakeSess.die_once = True
+    dev3._factory = _FakeSess
+    dev3.tap(9, 9)
+    assert not dev3._locked_out and len(_FakeSess.inst) == 2, \
+        (dev3._locked_out, len(_FakeSess.inst))
+    assert _FakeSess.inst[0].sent == [("tap 9 9", False)]
+    assert _FakeSess.inst[1].sent == [("tap 9 9", False)], "重建会话应重发原指令"
+    assert any("重建" in w for w in warns), warns
+
+    # 建立失败→永久回落 shell 路(之后不再碰会话)
+    dev4 = SessionDevice("emulator-5554")
+    dev4._run = lambda *a, **k: recorded.append(a) or b""
+    _FakeSess.inst = []
+    _FakeSess.fail_start = True
+    _FakeSess.die_once = False
+    dev4._factory = _FakeSess
+    dev4.tap(5, 5)                                    # 建立失败 → 回落, 基类 tap 走 shell 路
+    assert dev4._locked_out is True
+    assert any(a[:2] == ("shell", "input") for a in recorded), recorded[-2:]
+    n_inst = len(_FakeSess.inst)
+    dev4.tap(6, 6)
+    assert len(_FakeSess.inst) == n_inst, "回落后不应再碰会话"
+    assert any("回落" in w for w in warns), warns
+
+    # ---- AdbTarget 通道面: session 构造/非法通道/close 收口 ----
+    t5 = AdbTarget("emulator-5554", input="session")   # 构造不连设备(会话懒建立)
+    assert isinstance(t5.device, SessionDevice)
+    t5.close()                                         # 未建立过会话的 close 不炸
+    try:
+        AdbTarget("emulator-5554", input="bogus")
+        raise AssertionError("非法通道应 NotImplementedError")
+    except NotImplementedError:
+        pass
+
+
 def check_vision():
     """图色层: 模板/region/多点找色/区域找色族/卡死判定/raw 帧/模板目录注入+色键。"""
     # ---- 模板匹配 ----
@@ -1079,6 +1211,7 @@ def check_docs():
 
 _LAYERS = {
     "adb": check_adb,
+    "adb_session": check_adb_session,
     "vision": check_vision,
     "actions": check_actions,
     "ocr": check_ocr,
@@ -1139,11 +1272,11 @@ def _check_readme_api():
     assert api_doc.exists(), "docs/api.md 应与 README 同在(能力清单迁此)"
     api_text = api_doc.read_text(encoding="utf-8")
     both = text + "\n" + api_text
-    from . import actions, adb, ime, nav, ocr, ops, readout, target, vision
+    from . import actions, adb, adb_session, ime, nav, ocr, ops, readout, target, vision
     from .win32 import capture
     from .win32 import input as win_input
     from .win32 import window
-    modules = [vision, ocr, readout, actions, adb, ime, target, ops, nav,
+    modules = [vision, ocr, readout, actions, adb, adb_session, ime, target, ops, nav,
                window, capture, win_input]
     # `模块.名` 形式(可带不带括号): 名必须真实可取(含 win32 子模块的写法)
     # 模块名按文档里的简称匹配: vision/ocr/readout/actions/adb/ime/target + win32 三件
