@@ -384,8 +384,8 @@ def find_color(screen_bgr: np.ndarray, colors, tol=10, region=None,
     exclude=(x1,y1,x2,y2) 排除区(大漠 SetExcludeRegion 对应物): 落其中坐标丢弃."""
     sub, (x1, y1) = _region(screen_bgr, region)
     ys, xs = np.nonzero(_color_mask(sub, colors, tol))
-    return [(int(x) + x1, int(y) + y1) for y, x in zip(ys, xs)
-            if not _in_excl(int(x) + x1, int(y) + y1, exclude)]
+    pts = [(int(x) + x1, int(y) + y1) for y, x in zip(ys, xs)]
+    return [(px, py) for px, py in pts if not _in_excl(px, py, exclude)]
 
 
 def count_color(screen_bgr: np.ndarray, colors, tol=10, region=None,

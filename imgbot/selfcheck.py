@@ -975,7 +975,7 @@ def check_win32_window():
         gw = GameWindow(vh2)
         assert gw.is_pseudo_minimized is False
         gw.park_offscreen(True)
-        assert gw.is_pseudo_minimized is True
+        assert gw.is_pseudo_minimized is True, "停靠后应报告伪最小化"
         gw.park_offscreen(False)
         assert gw.is_pseudo_minimized is False
     finally:
